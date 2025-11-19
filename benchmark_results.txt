@@ -1,0 +1,16 @@
+Preparing benchmark...
+    Finished `release` profile [optimized] target(s) in 0.04s
+---------------------------------------------------
+Benchmark Results (Data Size: 200MB)
+System Cores: 12
+---------------------------------------------------
+[parallel-bz2]
+Found 234 streams
+Real: 2.23 s, User: 20.53 s, Sys: 0.36 s, CPU: 933%
+
+[pbzip2]
+Real: 2.12 s, User: 20.83 s, Sys: 0.34 s, CPU: 996%
+
+[lbzip2]
+Real: 2.01 s, User: 20.51 s, Sys: 0.43 s, CPU: 1041%
+

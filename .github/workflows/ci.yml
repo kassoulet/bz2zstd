@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libbz2-dev libzstd-dev
+
+    - name: Check formatting
+      run: cargo fmt -- --check
+
+    - name: Lint with clippy
+      run: cargo clippy -- -D warnings
+
+    - name: Run tests
+      run: cargo test --verbose
+
+  build-static:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Install musl-tools
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y musl-tools
+
+    - name: Install Rust target
+      run: rustup target add x86_64-unknown-linux-musl
+
+    - name: Build static binary
+      run: cargo build --release --target x86_64-unknown-linux-musl
+
+    - name: Verify static binary
+      run: |
+        file target/x86_64-unknown-linux-musl/release/bz2zstd
+        if ! file target/x86_64-unknown-linux-musl/release/bz2zstd | grep -q "statically linked"; then
+          echo "Error: Binary is not statically linked"
+          exit 1
+        fi
+
+    - name: Upload binary
+      uses: actions/upload-artifact@v3
+      with:
+        name: bz2zstd-static
+        path: target/x86_64-unknown-linux-musl/release/bz2zstd
