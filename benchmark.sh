@@ -29,21 +29,21 @@ echo "---------------------------------------------------" >> $RESULT_FILE
 run_bench() {
     TOOL_NAME=$1
     CMD=$2
-    
+
     echo "Running $TOOL_NAME..."
     echo "[$TOOL_NAME]" >> $RESULT_FILE
-    
-    # Clear cache to be fair (requires sudo, skipping for now as I might not have it, 
-    # but we can rely on the file being in cache for all of them if we run them sequentially quickly, 
+
+    # Clear cache to be fair (requires sudo, skipping for now as I might not have it,
+    # but we can rely on the file being in cache for all of them if we run them sequentially quickly,
     # or just accept FS cache impact. For CPU bound tasks, it's less critical).
-    
+
     # We use /usr/bin/time to get detailed stats
     # %P: Percentage of the CPU that this job got
     # %e: Elapsed (wall clock) time
     # %U: User time
     # %S: System time
     /usr/bin/time -f "Real: %e s, User: %U s, Sys: %S s, CPU: %P" $CMD 2>> $RESULT_FILE
-    
+
     echo "" >> $RESULT_FILE
 }
 

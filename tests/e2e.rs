@@ -1,6 +1,6 @@
-use std::process::Command;
-use std::path::Path;
 use std::fs;
+use std::path::Path;
+use std::process::Command;
 
 const BIN_PATH: &str = "target/release/bz2zstd";
 
@@ -44,8 +44,6 @@ fn calculate_md5(path: &str) -> String {
     let output_str = String::from_utf8_lossy(&output.stdout);
     output_str.split_whitespace().next().unwrap().to_string()
 }
-
-
 
 #[test]
 fn test_e2e_zstd_conversion() {

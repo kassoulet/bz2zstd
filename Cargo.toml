@@ -12,3 +12,9 @@ anyhow = "1.0"
 crossbeam-channel = "0.5"
 zstd = { version = "0.13", features = ["zstdmt"] }
 memchr = "2.7.6"
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

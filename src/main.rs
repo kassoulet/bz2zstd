@@ -34,7 +34,11 @@ fn main() -> Result<()> {
     let args = Args::parse();
 
     let file = File::open(&args.input).context("Failed to open input file")?;
-    let mmap = unsafe { MmapOptions::new().map(&file).context("Failed to mmap input file")? };
+    let mmap = unsafe {
+        MmapOptions::new()
+            .map(&file)
+            .context("Failed to mmap input file")?
+    };
 
     let streams = find_streams(&mmap);
     eprintln!("Found {} streams", streams.len());
@@ -54,15 +58,16 @@ fn main() -> Result<()> {
         } else {
             let input_str = args.input.to_string_lossy();
             if input_str.ends_with("bz2") {
-                 PathBuf::from(input_str.replace("bz2", "zst"))
+                PathBuf::from(input_str.replace("bz2", "zst"))
             } else {
-                 let mut path = args.input.clone();
-                 path.set_extension("zst");
-                 path
+                let mut path = args.input.clone();
+                path.set_extension("zst");
+                path
             }
         };
-        
-        let raw_out: Box<dyn Write + Send> = Box::new(File::create(output_path).context("Failed to create output file")?);
+
+        let raw_out: Box<dyn Write + Send> =
+            Box::new(File::create(output_path).context("Failed to create output file")?);
 
         // Writer now just writes the chunks it receives
         let mut out = OutputWriter::new(raw_out)?;
@@ -88,23 +93,34 @@ fn main() -> Result<()> {
     });
 
     // Parallel processing: Decompress -> Compress
-    streams.par_iter().enumerate().try_for_each(|(idx, &(start, end))| -> Result<()> {
-        let chunk = &mmap[start..end];
-        
-        // 1. Decompress
-        let mut decoder = BzDecoder::new(chunk);
-        let mut decompressed = Vec::new();
-        decoder.read_to_end(&mut decompressed).context("Failed to decompress stream")?;
-        
-        // 2. Compress (Independent Zstd Frame)
-        // We use the specified level. 
-        // Note: This creates a full Zstd frame for each chunk.
-        // Concatenated Zstd frames are valid.
-        let compressed = zstd::stream::encode_all(&decompressed[..], args.zstd_level)?;
-        
-        sender.send((idx, compressed)).context("Failed to send compressed data")?;
-        Ok(())
-    })?;
+    use zstd::bulk::Compressor;
+
+    // Parallel processing: Decompress -> Compress
+    streams.par_iter().enumerate().try_for_each_init(
+        || (Vec::new(), Compressor::new(args.zstd_level).unwrap()),
+        |(decomp_buf, compressor), (idx, &(start, end))| -> Result<()> {
+            let chunk = &mmap[start..end];
+
+            // 1. Decompress
+            decomp_buf.clear();
+            let mut decoder = BzDecoder::new(chunk);
+            decoder
+                .read_to_end(decomp_buf)
+                .context("Failed to decompress stream")?;
+
+            // 2. Compress (Independent Zstd Frame)
+            // Reuse the compressor context.
+            // Note: This creates a full Zstd frame for each chunk.
+            let compressed = compressor
+                .compress(decomp_buf)
+                .context("Failed to compress chunk")?;
+
+            sender
+                .send((idx, compressed))
+                .context("Failed to send compressed data")?;
+            Ok(())
+        },
+    )?;
 
     drop(sender); // Close the channel so the writer knows we're done
     writer_handle.join().unwrap()?;
