@@ -1,18 +1,14 @@
 use std::io::{self, Write};
-use zstd::stream::write::Encoder as ZstdEncoder;
 
-pub struct OutputWriter(ZstdEncoder<'static, Box<dyn Write + Send>>);
+pub struct OutputWriter(Box<dyn Write + Send>);
 
 impl OutputWriter {
-    pub fn new(writer: Box<dyn Write + Send>, level: i32, threads: u32) -> io::Result<Self> {
-        let mut zstd_out = ZstdEncoder::new(writer, level)?;
-        zstd_out.multithread(threads)?;
-        zstd_out.include_checksum(true)?;
-        Ok(OutputWriter(zstd_out))
+    pub fn new(writer: Box<dyn Write + Send>) -> io::Result<Self> {
+        Ok(OutputWriter(writer))
     }
 
-    pub fn finish(self) -> io::Result<()> {
-        self.0.finish()?;
+    pub fn finish(mut self) -> io::Result<()> {
+        self.0.flush()?;
         Ok(())
     }
 }

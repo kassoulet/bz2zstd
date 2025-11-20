@@ -48,7 +48,7 @@ run_bench() {
 }
 
 # 1. parallel-bz2
-run_bench "bz2zstd" "./target/release/bz2zstd --input $COMPRESSED_FILE --output out_parallel.bin"
+run_bench "bz2zstd" "./target/release/bz2zstd $COMPRESSED_FILE --output out_parallel.bin"
 
 # 2. pbzip2
 run_bench "pbzip2" "pbzip2 -d -k -f -p$(nproc) $COMPRESSED_FILE"

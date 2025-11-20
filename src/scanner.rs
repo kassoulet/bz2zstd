@@ -1,43 +1,33 @@
+use memchr::memmem;
+
 pub fn find_streams(data: &[u8]) -> Vec<(usize, usize)> {
     let mut streams: Vec<(usize, usize)> = Vec::new();
-    let mut i = 0;
+    let finder = memmem::Finder::new(b"BZh");
     
     // Stronger scanner: BZh[1-9] followed by 0x314159265359 (PI)
     // Total signature length: 4 bytes (header) + 6 bytes (block magic) = 10 bytes
     let magic_block = [0x31, 0x41, 0x59, 0x26, 0x53, 0x59];
 
-    while i < data.len() {
-        if let Some(pos) = find_subsequence(&data[i..], b"BZh") {
-            let absolute_pos = i + pos;
-            // Check if we have enough bytes for the full signature
-            if absolute_pos + 10 <= data.len() {
-                let compression_level = data[absolute_pos + 3];
-                if compression_level >= b'1' && compression_level <= b'9' {
-                    // Check for Block Magic PI
-                    if &data[absolute_pos + 4..absolute_pos + 10] == magic_block {
-                        if !streams.is_empty() {
-                            // Close the previous stream
-                            let last_idx = streams.len() - 1;
-                            streams[last_idx].1 = absolute_pos;
-                        }
-                        // Start new stream
-                        streams.push((absolute_pos, data.len())); // Default end to EOF
-                        i = absolute_pos + 1; // Advance
-                        continue;
+    for pos in finder.find_iter(data) {
+        // Check if we have enough bytes for the full signature
+        if pos + 10 <= data.len() {
+            let compression_level = data[pos + 3];
+            if compression_level >= b'1' && compression_level <= b'9' {
+                // Check for Block Magic PI
+                if &data[pos + 4..pos + 10] == magic_block {
+                    if !streams.is_empty() {
+                        // Close the previous stream
+                        let last_idx = streams.len() - 1;
+                        streams[last_idx].1 = pos;
                     }
+                    // Start new stream
+                    streams.push((pos, data.len())); // Default end to EOF
                 }
             }
-            i = absolute_pos + 1;
-        } else {
-            break;
         }
     }
     
     streams
-}
-
-fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    haystack.windows(needle.len()).position(|window| window == needle)
 }
 
 #[cfg(test)]

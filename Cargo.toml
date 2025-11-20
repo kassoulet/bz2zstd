@@ -11,3 +11,4 @@ clap = { version = "4.4", features = ["derive"] }
 anyhow = "1.0"
 crossbeam-channel = "0.5"
 zstd = { version = "0.13", features = ["zstdmt"] }
+memchr = "2.7.6"
