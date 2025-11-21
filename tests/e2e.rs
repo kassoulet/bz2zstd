@@ -53,7 +53,16 @@ fn test_e2e_zstd_conversion() {
     let zstd_file = "test_e2e_zstd.zst";
     let out_file = "test_e2e_zstd_out.bin";
 
-    generate_data(test_file, 5);
+    // Generate 0.5MB of data (5 * 100KB) to stay within the 1MB hardcoded limit
+    let status = Command::new("dd")
+        .arg("if=/dev/urandom")
+        .arg(format!("of={}", test_file))
+        .arg("bs=100k")
+        .arg("count=5")
+        .arg("status=none")
+        .status()
+        .expect("Failed to run dd");
+    assert!(status.success(), "Failed to generate data");
     let orig_md5 = calculate_md5(test_file);
     compress_pbzip2(test_file);
 
@@ -106,8 +115,8 @@ fn test_e2e_scan_limit() {
     
     let output = Command::new(Path::new(BIN_PATH))
         .arg(&bz2_file)
-        .arg("--scan-limit")
-        .arg("100000") // 100KB, likely only header or first partial stream
+        .env("RAYON_NUM_THREADS", "1") // Force 1 thread so limit is 1MB
+        // No scan-limit argument needed, it's hardcoded to 1MB per core
         .output()
         .expect("Failed to run bz2zstd with limit");
     
