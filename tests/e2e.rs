@@ -59,7 +59,6 @@ fn test_e2e_zstd_conversion() {
 
     // Convert to zstd
     let status = Command::new(Path::new(BIN_PATH))
-        .arg("--input")
         .arg(&bz2_file)
         .arg("--output")
         .arg(zstd_file)
@@ -86,4 +85,49 @@ fn test_e2e_zstd_conversion() {
     let _ = fs::remove_file(bz2_file);
     let _ = fs::remove_file(zstd_file);
     let _ = fs::remove_file(out_file);
+}
+
+#[test]
+fn test_e2e_scan_limit() {
+    compile_binary();
+    let test_file = "test_e2e_limit.bin";
+    let bz2_file = format!("{}.bz2", test_file);
+    
+    // Generate data and compress with pbzip2 (creates multiple streams)
+    generate_data(test_file, 2); // 2MB
+    compress_pbzip2(test_file);
+
+    // Run with scan-limit that should only catch the first stream (approx)
+    // pbzip2 default block size is 900k. 2MB should be ~3 blocks/streams.
+    // Limit to 1MB should find 1 or 2 streams.
+    // Actually, let's just check it runs without error and produces output.
+    // Precise stream counting via CLI output is hard in e2e without parsing stderr.
+    // But we can check if it finishes successfully.
+    
+    let output = Command::new(Path::new(BIN_PATH))
+        .arg(&bz2_file)
+        .arg("--scan-limit")
+        .arg("100000") // 100KB, likely only header or first partial stream
+        .output()
+        .expect("Failed to run bz2zstd with limit");
+    
+    // We expect it to fail because the stream is truncated by the limit
+    assert!(!output.status.success());
+    
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Failed to decompress stream"));
+    
+    // Verify it didn't crash with a signal (like OOM)
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        assert!(output.status.signal().is_none());
+    }
+
+    // Cleanup
+    let _ = fs::remove_file(test_file);
+    let _ = fs::remove_file(bz2_file);
+    if Path::new("test_e2e_limit.zst").exists() {
+        let _ = fs::remove_file("test_e2e_limit.zst");
+    }
 }

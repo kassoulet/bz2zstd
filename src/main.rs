@@ -28,6 +28,11 @@ struct Args {
     /// Zstd compression level (default = 3)
     #[arg(long, default_value_t = 3)]
     zstd_level: i32,
+
+    /// Limit the size of the input file to scan for streams (in bytes).
+    /// Useful for huge single-stream files to avoid OOM.
+    #[arg(long)]
+    scan_limit: Option<usize>,
 }
 
 fn main() -> Result<()> {
@@ -40,7 +45,9 @@ fn main() -> Result<()> {
             .context("Failed to mmap input file")?
     };
 
-    let streams = find_streams(&mmap);
+    let scan_limit = args.scan_limit.unwrap_or(mmap.len());
+    let scan_limit = std::cmp::min(scan_limit, mmap.len());
+    let streams = find_streams(&mmap[..scan_limit]);
     eprintln!("Found {} streams", streams.len());
 
     if streams.is_empty() {

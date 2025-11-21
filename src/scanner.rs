@@ -94,4 +94,41 @@ mod tests {
         let streams = find_streams(&data);
         assert!(streams.is_empty());
     }
+
+    #[test]
+    fn test_find_streams_sliced() {
+        let mut data = Vec::new();
+
+        // Stream 1
+        let s1_start = 0;
+        data.extend_from_slice(b"BZh9");
+        data.extend_from_slice(&[0x31, 0x41, 0x59, 0x26, 0x53, 0x59]);
+        data.extend_from_slice(b"stream1");
+
+        // Stream 2
+        let s2_start = data.len();
+        data.extend_from_slice(b"BZh5");
+        data.extend_from_slice(&[0x31, 0x41, 0x59, 0x26, 0x53, 0x59]);
+        data.extend_from_slice(b"stream2");
+
+        // Test with full data
+        let streams = find_streams(&data);
+        assert_eq!(streams.len(), 2);
+        assert_eq!(streams[0], (s1_start, s2_start));
+        assert_eq!(streams[1], (s2_start, data.len()));
+
+        // Test with slice that cuts off the second stream header
+        // Slice ends right before 'B' of second stream
+        let slice_len = s2_start;
+        let streams_sliced = find_streams(&data[..slice_len]);
+        assert_eq!(streams_sliced.len(), 1);
+        assert_eq!(streams_sliced[0], (s1_start, slice_len));
+
+        // Test with slice that includes header but not full signature of second stream
+        // Slice ends after 'BZh5' but before PI
+        let slice_len_partial = s2_start + 4;
+        let streams_sliced_partial = find_streams(&data[..slice_len_partial]);
+        assert_eq!(streams_sliced_partial.len(), 1);
+        assert_eq!(streams_sliced_partial[0], (s1_start, slice_len_partial));
+    }
 }
