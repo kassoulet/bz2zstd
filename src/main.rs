@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use bzip2::read::BzDecoder;
 use clap::Parser;
 use crossbeam_channel::bounded;
+use indicatif::{ProgressBar, ProgressStyle};
 use memmap2::MmapOptions;
 use rayon::prelude::*;
 use std::collections::HashMap;
@@ -183,6 +184,13 @@ fn main() -> Result<()> {
 
         // Worker Pool
         use zstd::bulk::Compressor;
+
+        let pb = ProgressBar::new(mmap.len() as u64);
+        pb.set_style(ProgressStyle::with_template("{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {bytes}/{total_bytes} ({eta})")
+            .unwrap());
+
+        let pb_ref = &pb;
+
         task_receiver.into_iter().enumerate().par_bridge().try_for_each_init(
             || (Vec::new(), Compressor::new(args.zstd_level).unwrap(), Vec::new()),
             |(decomp_buf, compressor, wrapped_data), (idx, (start_bit, end_bit))| -> Result<()> {
@@ -203,9 +211,17 @@ fn main() -> Result<()> {
                 let compressed = compressor.compress(decomp_buf).context("Failed to compress chunk")?;
                 
                 result_sender.send((idx, compressed)).context("Failed to send compressed data")?;
+                
+                // Update progress bar
+                // We approximate progress by the input size processed
+                let input_bits = end_bit - start_bit;
+                pb_ref.inc(input_bits / 8);
+
                 Ok(())
             },
         )?;
+        
+        pb.finish_with_message("Done!");
         
         Ok::<(), anyhow::Error>(())
     })?;
