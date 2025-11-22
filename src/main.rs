@@ -12,7 +12,7 @@ use std::thread;
 
 mod scanner;
 mod writer;
-use scanner::find_streams;
+use scanner::{extract_bits, MarkerType, Scanner};
 use writer::OutputWriter;
 
 #[derive(Parser, Debug)]
@@ -28,6 +28,10 @@ struct Args {
     /// Zstd compression level (default = 3)
     #[arg(long, default_value_t = 3)]
     zstd_level: i32,
+
+    /// Benchmark mode: Only run the scanner and exit
+    #[arg(long)]
+    benchmark_scan: bool,
 }
 
 fn main() -> Result<()> {
@@ -40,20 +44,49 @@ fn main() -> Result<()> {
             .context("Failed to mmap input file")?
     };
 
-    // Limit scan to 1MB per core to avoid OOM on huge single-stream files
-    let scan_limit = rayon::current_num_threads() * 1_000_000;
-    let scan_limit = std::cmp::min(scan_limit, mmap.len());
-    let streams = find_streams(&mmap[..scan_limit]);
-    eprintln!("Found {} streams", streams.len());
+    // Create a separate thread pool for the scanner to avoid starvation/deadlock
+    // with the worker pool (global) when using par_bridge.
+    // We use N threads to allow maximum burst throughput. OS scheduling handles contention.
+    let scanner_threads = rayon::current_num_threads();
+    let scanner_pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(scanner_threads)
+        .build()
+        .context("Failed to create scanner thread pool")?;
 
-    if streams.is_empty() {
-        eprintln!("No bzip2 streams found.");
+    if args.benchmark_scan {
+        let start = std::time::Instant::now();
+        let scanner = Scanner::new(&mmap);
+        
+        let (tx, rx) = bounded(1000); // Buffer for chunk results
+        let pool_ref = &scanner_pool;
+        let mmap_ref = &mmap;
+        
+        // Spawn scanner in background
+        thread::scope(|s| {
+            s.spawn(move || {
+                scanner.scan_stream(mmap_ref, 0, pool_ref, tx);
+            });
+            
+            let mut count = 0;
+            // We don't need to reorder for benchmark, just count
+            for (_, markers) in rx {
+                count += markers.len();
+            }
+            
+            let elapsed = start.elapsed();
+            println!("Scanned {} markers in {:.2?}", count, elapsed);
+            let mb = mmap.len() as f64 / 1024.0 / 1024.0;
+            println!("Throughput: {:.2} MB/s", mb / elapsed.as_secs_f64());
+        });
         return Ok(());
     }
 
-    // Channel for sending compressed chunks to the writer
-    // We use a bounded channel to avoid using too much memory if the writer is slow
-    let (sender, receiver) = bounded::<(usize, Vec<u8>)>(rayon::current_num_threads() * 2);
+    // Channel for tasks: (start_bit, end_bit)
+    // Bounded to avoid scanning too far ahead if workers are slow.
+    // Small buffer to maintain cache locality.
+    let (task_sender, task_receiver) = bounded::<(u64, u64)>(100);
+    
+    let (result_sender, result_receiver) = bounded::<(usize, Vec<u8>)>(rayon::current_num_threads() * 2);
 
     let writer_handle = thread::spawn(move || -> Result<()> {
         let output_path = if let Some(path) = args.output {
@@ -72,13 +105,11 @@ fn main() -> Result<()> {
         let raw_out: Box<dyn Write + Send> =
             Box::new(File::create(output_path).context("Failed to create output file")?);
 
-        // Writer now just writes the chunks it receives
         let mut out = OutputWriter::new(raw_out)?;
-
         let mut buffer: HashMap<usize, Vec<u8>> = HashMap::new();
         let mut next_idx = 0;
 
-        for (idx, data) in receiver {
+        for (idx, data) in result_receiver {
             if idx == next_idx {
                 out.write_all(&data)?;
                 next_idx += 1;
@@ -95,37 +126,92 @@ fn main() -> Result<()> {
         Ok(())
     });
 
-    // Parallel processing: Decompress -> Compress
-    use zstd::bulk::Compressor;
+    std::thread::scope(|s| {
+        let mmap_ref = &mmap;
+        let scanner_pool_ref = &scanner_pool;
+        
+        // Scanner Thread
+        s.spawn(move || {
+            let scanner = Scanner::new(mmap_ref);
+            // Small buffer for chunks to prevent scanning too far ahead (cache thrashing)
+            let (chunk_tx, chunk_rx) = bounded(4); 
+            
+            // Spawn the actual scanning in a background thread
+            s.spawn(move || {
+                scanner.scan_stream(mmap_ref, 0, scanner_pool_ref, chunk_tx);
+            });
+            
+            // Consume and reorder
+            let mut chunk_buffer: HashMap<usize, Vec<(u64, MarkerType)>> = HashMap::new();
+            let mut next_chunk_idx = 0;
+            let mut current_block_start: Option<u64> = None;
+            
+            for (idx, markers) in chunk_rx {
+                chunk_buffer.insert(idx, markers);
+                
+                while let Some(markers) = chunk_buffer.remove(&next_chunk_idx) {
+                    for (marker_pos, mtype) in markers {
+                        match mtype {
+                            MarkerType::Block => {
+                                if let Some(start) = current_block_start {
+                                    if task_sender.send((start, marker_pos)).is_err() {
+                                        return;
+                                    }
+                                }
+                                current_block_start = Some(marker_pos);
+                            }
+                            MarkerType::Eos => {
+                                if let Some(start) = current_block_start {
+                                    if task_sender.send((start, marker_pos)).is_err() {
+                                        return;
+                                    }
+                                    current_block_start = None;
+                                }
+                            }
+                        }
+                    }
+                    next_chunk_idx += 1;
+                }
+            }
+            
+            // If we have a dangling block start (EOF reached without EOS marker?)
+            if let Some(start) = current_block_start {
+                 let end = (mmap_ref.len() as u64) * 8;
+                 let _ = task_sender.send((start, end));
+            }
+        });
 
-    // Parallel processing: Decompress -> Compress
-    streams.par_iter().enumerate().try_for_each_init(
-        || (Vec::new(), Compressor::new(args.zstd_level).unwrap()),
-        |(decomp_buf, compressor), (idx, &(start, end))| -> Result<()> {
-            let chunk = &mmap[start..end];
+        // Worker Pool
+        use zstd::bulk::Compressor;
+        task_receiver.into_iter().enumerate().par_bridge().try_for_each_init(
+            || (Vec::new(), Compressor::new(args.zstd_level).unwrap()),
+            |(decomp_buf, compressor), (idx, (start_bit, end_bit))| -> Result<()> {
+                let mut block_data = extract_bits(&mmap, start_bit, end_bit);
+                let mut wrapped_data = Vec::with_capacity(4 + block_data.len());
+                wrapped_data.extend_from_slice(b"BZh9"); // Minimal header
+                wrapped_data.append(&mut block_data);
 
-            // 1. Decompress
-            decomp_buf.clear();
-            let mut decoder = BzDecoder::new(chunk);
-            decoder
-                .read_to_end(decomp_buf)
-                .context("Failed to decompress stream")?;
+                // Decompress, handling potential UnexpectedEof for the last block
+                decomp_buf.clear();
+                let mut decoder = BzDecoder::new(&wrapped_data[..]);
+                match decoder.read_to_end(decomp_buf) {
+                    Ok(_) => {}, 
+                    Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {}, // Expected for last block without EOS
+                    Err(e) => return Err(e).context("Failed to decompress block"),
+                }
 
-            // 2. Compress (Independent Zstd Frame)
-            // Reuse the compressor context.
-            // Note: This creates a full Zstd frame for each chunk.
-            let compressed = compressor
-                .compress(decomp_buf)
-                .context("Failed to compress chunk")?;
+                // Compress to Zstd
+                let compressed = compressor.compress(decomp_buf).context("Failed to compress chunk")?;
+                
+                result_sender.send((idx, compressed)).context("Failed to send compressed data")?;
+                Ok(())
+            },
+        )?;
+        
+        Ok::<(), anyhow::Error>(())
+    })?;
 
-            sender
-                .send((idx, compressed))
-                .context("Failed to send compressed data")?;
-            Ok(())
-        },
-    )?;
-
-    drop(sender); // Close the channel so the writer knows we're done
+    drop(result_sender);
     writer_handle.join().unwrap()?;
 
     Ok(())

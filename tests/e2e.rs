@@ -97,46 +97,70 @@ fn test_e2e_zstd_conversion() {
 }
 
 #[test]
-fn test_e2e_scan_limit() {
+fn test_e2e_large_file() {
     compile_binary();
-    let test_file = "test_e2e_limit.bin";
+    let test_file = "test_e2e_large.bin";
     let bz2_file = format!("{}.bz2", test_file);
+    let zstd_file = "test_e2e_large.zst";
+    let out_file = "test_e2e_large_out.bin";
     
-    // Generate data and compress with pbzip2 (creates multiple streams)
-    generate_data(test_file, 2); // 2MB
-    compress_pbzip2(test_file);
-
-    // Run with scan-limit that should only catch the first stream (approx)
-    // pbzip2 default block size is 900k. 2MB should be ~3 blocks/streams.
-    // Limit to 1MB should find 1 or 2 streams.
-    // Actually, let's just check it runs without error and produces output.
-    // Precise stream counting via CLI output is hard in e2e without parsing stderr.
-    // But we can check if it finishes successfully.
+    // Generate 5MB of data (enough to have multiple blocks)
+    generate_data(test_file, 5);
     
-    let output = Command::new(Path::new(BIN_PATH))
-        .arg(&bz2_file)
-        .env("RAYON_NUM_THREADS", "1") // Force 1 thread so limit is 1MB
-        // No scan-limit argument needed, it's hardcoded to 1MB per core
-        .output()
-        .expect("Failed to run bz2zstd with limit");
+    // Compress with bzip2 (single stream usually, unless pbzip2 used)
+    // Use standard bzip2 to ensure single stream if possible, or pbzip2 is fine too.
+    // If we use pbzip2, it creates multiple streams.
+    // To test block splitting, we need a single large stream.
+    // `bzip2` is single threaded and creates one stream.
+    // But `bzip2` might not be installed or slow.
+    // `pbzip2` with `-p1` creates one stream? No, it still splits.
+    // Actually, `pbzip2` creates independent streams.
+    // To test our block splitter, we need a file that `find_streams` sees as 1 stream,
+    // but `find_blocks` splits.
+    // Standard `bzip2` does this.
     
-    // We expect it to fail because the stream is truncated by the limit
-    assert!(!output.status.success());
-    
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("Failed to decompress stream"));
-    
-    // Verify it didn't crash with a signal (like OOM)
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::ExitStatusExt;
-        assert!(output.status.signal().is_none());
+    let status = Command::new("bzip2")
+        .arg("-k")
+        .arg("-f")
+        .arg(test_file)
+        .status();
+        
+    if status.is_err() || !status.unwrap().success() {
+        // Fallback to pbzip2 if bzip2 not found, but then we might not test block splitting of single stream.
+        // But we still test correctness.
+        eprintln!("bzip2 not found or failed, trying pbzip2");
+        compress_pbzip2(test_file);
     }
+
+    let orig_md5 = calculate_md5(test_file);
+
+    // Run bz2zstd
+    let status = Command::new(Path::new(BIN_PATH))
+        .arg(&bz2_file)
+        .arg("--output")
+        .arg(zstd_file)
+        .status()
+        .expect("Failed to run bz2zstd");
+    
+    assert!(status.success(), "bz2zstd failed");
+    
+    // Decompress zstd to verify
+    let status = Command::new("zstd")
+        .arg("-d")
+        .arg("-f")
+        .arg("-o")
+        .arg(out_file)
+        .arg(zstd_file)
+        .status()
+        .expect("Failed to run zstd");
+    assert!(status.success(), "zstd decompression failed");
+
+    let new_md5 = calculate_md5(out_file);
+    assert_eq!(orig_md5, new_md5, "MD5 mismatch");
 
     // Cleanup
     let _ = fs::remove_file(test_file);
     let _ = fs::remove_file(bz2_file);
-    if Path::new("test_e2e_limit.zst").exists() {
-        let _ = fs::remove_file("test_e2e_limit.zst");
-    }
+    let _ = fs::remove_file(zstd_file);
+    let _ = fs::remove_file(out_file);
 }

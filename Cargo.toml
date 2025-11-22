@@ -12,6 +12,7 @@ anyhow = "1.0"
 crossbeam-channel = "0.5"
 zstd = { version = "0.13", features = ["zstdmt"] }
 memchr = "2.7.6"
+aho-corasick = "1.1.4"
 
 [profile.release]
 lto = true
