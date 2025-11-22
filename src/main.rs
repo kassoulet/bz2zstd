@@ -55,7 +55,7 @@ fn main() -> Result<()> {
 
     if args.benchmark_scan {
         let start = std::time::Instant::now();
-        let scanner = Scanner::new(&mmap);
+        let scanner = Scanner::new();
         
         let (tx, rx) = bounded(1000); // Buffer for chunk results
         let pool_ref = &scanner_pool;
@@ -132,7 +132,7 @@ fn main() -> Result<()> {
         
         // Scanner Thread
         s.spawn(move || {
-            let scanner = Scanner::new(mmap_ref);
+            let scanner = Scanner::new();
             // Small buffer for chunks to prevent scanning too far ahead (cache thrashing)
             let (chunk_tx, chunk_rx) = bounded(4); 
             
@@ -184,12 +184,11 @@ fn main() -> Result<()> {
         // Worker Pool
         use zstd::bulk::Compressor;
         task_receiver.into_iter().enumerate().par_bridge().try_for_each_init(
-            || (Vec::new(), Compressor::new(args.zstd_level).unwrap()),
-            |(decomp_buf, compressor), (idx, (start_bit, end_bit))| -> Result<()> {
-                let mut block_data = extract_bits(&mmap, start_bit, end_bit);
-                let mut wrapped_data = Vec::with_capacity(4 + block_data.len());
+            || (Vec::new(), Compressor::new(args.zstd_level).unwrap(), Vec::new()),
+            |(decomp_buf, compressor, wrapped_data), (idx, (start_bit, end_bit))| -> Result<()> {
+                wrapped_data.clear();
                 wrapped_data.extend_from_slice(b"BZh9"); // Minimal header
-                wrapped_data.append(&mut block_data);
+                extract_bits(&mmap, start_bit, end_bit, wrapped_data);
 
                 // Decompress, handling potential UnexpectedEof for the last block
                 decomp_buf.clear();

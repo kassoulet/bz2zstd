@@ -6,37 +6,37 @@ pub enum MarkerType {
     Eos,
 }
 
+const MAGIC_BLOCK: u64 = 0x314159265359;
+const MAGIC_EOS: u64 = 0x177245385090;
+
 pub struct Scanner {
     ac: AhoCorasick,
     patterns_info: Vec<(u64, MarkerType, usize)>, // (magic, type, shift)
 }
 
 impl Scanner {
-    pub fn new(_data: &[u8]) -> Self {
-        let magic_block: u64 = 0x314159265359;
-        let magic_eos: u64 = 0x177245385090;
-        
+    pub fn new() -> Self {
         let mut patterns = Vec::new();
         let mut patterns_info = Vec::new();
 
         // Generate patterns for Block
-        let magic_top = magic_block << 16;
+        let magic_top = MAGIC_BLOCK << 16;
         for shift in 0..8 {
             let pattern_u64 = magic_top >> shift;
             let pattern_bytes = pattern_u64.to_be_bytes();
             let search_key = pattern_bytes[1..5].to_vec();
             patterns.push(search_key);
-            patterns_info.push((magic_block, MarkerType::Block, shift));
+            patterns_info.push((MAGIC_BLOCK, MarkerType::Block, shift));
         }
 
         // Generate patterns for EOS
-        let magic_top = magic_eos << 16;
+        let magic_top = MAGIC_EOS << 16;
         for shift in 0..8 {
             let pattern_u64 = magic_top >> shift;
             let pattern_bytes = pattern_u64.to_be_bytes();
             let search_key = pattern_bytes[1..5].to_vec();
             patterns.push(search_key);
-            patterns_info.push((magic_eos, MarkerType::Eos, shift));
+            patterns_info.push((MAGIC_EOS, MarkerType::Eos, shift));
         }
 
         let ac = AhoCorasick::new(patterns).unwrap();
@@ -62,18 +62,9 @@ impl Scanner {
         let len = data.len();
         let num_chunks = (len + chunk_size - 1) / chunk_size;
 
-        // We spawn tasks into the pool.
-        // We don't wait for them here.
-        // But we need to make sure `data` lives long enough.
-        // `data` is `&[u8]`. `Scanner` is `&Scanner`.
-        // The closure passed to `spawn` must be `'static` unless we use `scope`.
-        // But `scan_stream` is called inside `scope` in `main.rs`.
-        // So we can use `pool.scope`?
-        // `pool.scope` blocks until all tasks finish.
-        // We want to return immediately?
-        // No, `scan_stream` runs in `Scanner Thread`.
-        // If it blocks until all chunks are scanned, that's fine, AS LONG AS it sends results AS THEY FINISH.
-        // `pool.scope` allows that.
+        // Use pool.scope to allow borrowing `data` in the closure.
+        // This blocks until all tasks are finished, but since we are in a dedicated
+        // scanner thread and sending results via channel, this is the desired behavior.
         
         pool.scope(|s| {
             for i in 0..num_chunks {
@@ -113,17 +104,17 @@ impl Scanner {
 
 }
 
-/// Extracts a range of bits from the byte slice and returns them as a byte vector.
+/// Extracts a range of bits from the byte slice and writes them into the provided buffer.
 /// The output is byte-aligned (starts at bit 0 of the first output byte).
 /// If the number of bits is not a multiple of 8, the last byte is padded with zeros in the low bits.
-pub fn extract_bits(data: &[u8], start_bit: u64, end_bit: u64) -> Vec<u8> {
+pub fn extract_bits(data: &[u8], start_bit: u64, end_bit: u64, out: &mut Vec<u8>) {
     if start_bit >= end_bit {
-        return Vec::new();
+        return;
     }
 
     let bit_len = end_bit - start_bit;
     let byte_len = ((bit_len + 7) / 8) as usize;
-    let mut out = Vec::with_capacity(byte_len);
+    out.reserve(byte_len);
 
     let start_byte = (start_bit / 8) as usize;
     let shift = (start_bit % 8) as u8;
@@ -146,49 +137,7 @@ pub fn extract_bits(data: &[u8], start_bit: u64, end_bit: u64) -> Vec<u8> {
         let mut bits_left = bit_len;
         
         // Process 8 bytes at a time (u64)
-        // We need 9 bytes of input to produce 8 bytes of output (due to shift)
-        // Actually, we can read u64, shift, and write u64?
-        // No, output is Vec<u8>.
-        // We can cast out pointer to u64? Unsafe.
-        // Let's stick to reading u64 and writing bytes, or writing u64 if we use unsafe.
-        // Safe approach: Read u64, write bytes.
-        // But writing bytes one by one is slow.
-        // We want to write u64.
-        // Let's use `out.extend_from_slice(&val.to_be_bytes())`.
-        
         while bits_left >= 64 {
-            // We need 64 bits.
-            // Input: data[idx..idx+9].
-            // We read u64 from idx.
-            // val1 = u64::from_be_bytes(data[idx..idx+8])
-            // val2 = data[idx+8]
-            // result = (val1 << shift) | (val2 >> (8-shift)) ??
-            // No, shifting u64 left by shift.
-            // We need bits from next byte.
-            // This is complex for u64.
-            
-            // Simpler: Read u64 at UNALIGNED address?
-            // No, we are reading from `data` which is `&[u8]`.
-            // We want to extract 64 bits starting at `start_bit`.
-            // `start_bit` is `idx * 8 + shift`.
-            // We can read u64 from `data` at `idx` and `idx+1`.
-            // Actually, if we read u64 from `data[idx..idx+8]`.
-            // And u64 from `data[idx+1..idx+9]`.
-            // Then shift?
-            
-            // Let's use the property:
-            // val = (u64_at_idx << shift) | (byte_at_idx_plus_8 >> (8-shift))
-            // This gives 64 bits?
-            // `u64_at_idx` has 64 bits.
-            // `<< shift` loses top `shift` bits.
-            // We want those bits?
-            // No, we want bits starting at `shift`.
-            // So we want `u64_at_idx` shifted LEFT?
-            // `data[idx]` is MSB.
-            // If shift=1. We want bits 1..7 of byte 0, bits 0..7 of byte 1...
-            // `val = (u64_at_idx << shift) | (next_byte >> (8-shift))`
-            // This works!
-            
             if idx + 9 <= data.len() {
                 let bytes: [u8; 8] = data[idx..idx+8].try_into().unwrap();
                 let val1 = u64::from_be_bytes(bytes);
@@ -223,38 +172,11 @@ pub fn extract_bits(data: &[u8], start_bit: u64, end_bit: u64) -> Vec<u8> {
             let mut val = (b1 << shift) | (b2 >> (8 - shift));
             
             // Mask the last byte
-            // We only want `bits_left` bits.
-            // The `val` contains 8 bits (some might be garbage from b2).
-            // We want to keep top `bits_left` bits.
-            // mask = 0xFF << (8 - bits_left)
             let mask = 0xFFu8 << (8 - bits_left);
             val &= mask;
             out.push(val);
         }
     }
-    
-    // The original code handled "Mask the last byte if needed" separately.
-    // My new code handles it in the "remaining bits" section.
-    // But wait, if `bit_len` is not multiple of 8.
-    // The loop `while bits_left >= 8` handles full bytes.
-    // The last byte (partial) is handled after.
-    // But what if `bit_len` was e.g. 12.
-    // Loop runs once (8 bits). `out` has 1 byte.
-    // `bits_left` = 4.
-    // `idx` incremented.
-    // Handle remaining 4 bits.
-    // We read `data[idx]` and `data[idx+1]`.
-    // Shift.
-    // Mask.
-    // Push.
-    // This is correct.
-    
-    // Wait, the original code had:
-    // let last_bits = (bit_len % 8) as u8;
-    // if last_bits > 0 { ... mask last byte ... }
-    // My new code does the same.
-    
-    out
 }
 
 fn verify_magic(data: &[u8], bit_offset: u64, expected_magic: u64) -> bool {
@@ -286,7 +208,7 @@ mod tests {
     use super::*;
 
     fn scan_to_vec(data: &[u8]) -> Vec<(u64, MarkerType)> {
-        let scanner = Scanner::new(data);
+        let scanner = Scanner::new();
         let (tx, rx) = crossbeam_channel::bounded(100);
         let pool = rayon::ThreadPoolBuilder::new().num_threads(1).build().unwrap();
         
@@ -390,7 +312,8 @@ mod tests {
     fn test_extract_bits_aligned() {
         let data = vec![0xAA, 0xBB, 0xCC];
         // Extract 0xBB
-        let extracted = extract_bits(&data, 8, 16);
+        let mut extracted = Vec::new();
+        extract_bits(&data, 8, 16, &mut extracted);
         assert_eq!(extracted, vec![0xBB]);
     }
 
@@ -404,7 +327,8 @@ mod tests {
         // Byte 1 (BB): [1011]1011
         // Result: 1010 1011 = 0xAB
         let data = vec![0xAA, 0xBB];
-        let extracted = extract_bits(&data, 4, 12);
+        let mut extracted = Vec::new();
+        extract_bits(&data, 4, 12, &mut extracted);
         assert_eq!(extracted, vec![0xAB]);
     }
 
@@ -414,7 +338,8 @@ mod tests {
         // Extract 4 bits at 0.
         // Result: 11110000 = 0xF0
         let data = vec![0xFF];
-        let extracted = extract_bits(&data, 0, 4);
+        let mut extracted = Vec::new();
+        extract_bits(&data, 0, 4, &mut extracted);
         assert_eq!(extracted, vec![0xF0]);
     }
     
@@ -425,7 +350,8 @@ mod tests {
         let data = vec![0xFF; 10];
         // Extract 64 bits at offset 4
         // Should be all 1s
-        let extracted = extract_bits(&data, 4, 68);
+        let mut extracted = Vec::new();
+        extract_bits(&data, 4, 68, &mut extracted);
         assert_eq!(extracted.len(), 8);
         assert_eq!(extracted, vec![0xFF; 8]);
     }
