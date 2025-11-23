@@ -11,15 +11,27 @@ env:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
 
     steps:
     - uses: actions/checkout@v4
 
-    - name: Install dependencies
+    - name: Install dependencies (Linux)
+      if: runner.os == 'Linux'
       run: |
         sudo apt-get update
         sudo apt-get install -y libbz2-dev libzstd-dev bzip2 pbzip2 zstd
+
+    - name: Install dependencies (macOS)
+      if: runner.os == 'macOS'
+      run: brew install bzip2 zstd
+
+    - name: Install dependencies (Windows)
+      if: runner.os == 'Windows'
+      run: choco install zstandard bzip2
 
     - name: Check formatting
       run: cargo fmt -- --check
