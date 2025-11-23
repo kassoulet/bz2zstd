@@ -64,7 +64,13 @@ fn test_e2e_zstd_conversion() {
         .expect("Failed to run dd");
     assert!(status.success(), "Failed to generate data");
     let orig_md5 = calculate_md5(test_file);
-    compress_pbzip2(test_file);
+    let status = Command::new("bzip2")
+        .arg("-k")
+        .arg("-f")
+        .arg(test_file)
+        .status()
+        .expect("Failed to run bzip2");
+    assert!(status.success(), "Failed to compress with bzip2");
 
     // Convert to zstd
     let status = Command::new(Path::new(BIN_PATH))
