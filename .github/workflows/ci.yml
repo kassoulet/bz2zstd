@@ -49,7 +49,7 @@ jobs:
     - name: Verify static binary
       run: |
         file target/x86_64-unknown-linux-musl/release/bz2zstd
-        if ! file target/x86_64-unknown-linux-musl/release/bz2zstd | grep -q "statically linked"; then
+        if ! file target/x86_64-unknown-linux-musl/release/bz2zstd | grep -q "static"; then
           echo "Error: Binary is not statically linked"
           exit 1
         fi
