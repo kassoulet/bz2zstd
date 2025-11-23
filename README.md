@@ -59,3 +59,11 @@ On a 12-core system with a 200MB multi-stream bzip2 file:
 ## License
 
 MIT
+
+## Benchmarking
+
+A scaling benchmark script is provided in `scripts/benchmark_scaling.sh`. This script generates a random file, compresses it with `bzip2`, and then runs `bz2zstd` with varying thread counts to measure scaling performance.
+
+```bash
+./scripts/benchmark_scaling.sh
+```

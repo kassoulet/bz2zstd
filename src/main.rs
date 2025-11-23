@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use bzip2::read::BzDecoder;
 use clap::Parser;
 use crossbeam_channel::bounded;
-use indicatif::{ProgressBar, ProgressStyle};
+use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use memmap2::MmapOptions;
 use rayon::prelude::*;
 use std::collections::HashMap;
@@ -186,6 +186,7 @@ fn main() -> Result<()> {
         use zstd::bulk::Compressor;
 
         let pb = ProgressBar::new(mmap.len() as u64);
+        pb.set_draw_target(ProgressDrawTarget::stderr_with_hz(5));
         pb.set_style(ProgressStyle::with_template("{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {bytes}/{total_bytes} ({eta})")
             .unwrap());
 
