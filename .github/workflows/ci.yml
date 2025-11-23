@@ -42,32 +42,57 @@ jobs:
     - name: Run tests
       run: cargo test --verbose
 
-  build-static:
-    runs-on: ubuntu-latest
+  build-artifacts:
+    name: Build Artifacts
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            artifact_name: bz2zstd-linux
+            binary_name: bz2zstd
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            artifact_name: bz2zstd-macos
+            binary_name: bz2zstd
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact_name: bz2zstd-windows
+            binary_name: bz2zstd.exe
+
     steps:
     - uses: actions/checkout@v4
 
-    - name: Install musl-tools
+    - name: Install musl-tools (Linux)
+      if: matrix.os == 'ubuntu-latest'
       run: |
         sudo apt-get update
         sudo apt-get install -y musl-tools
 
     - name: Install Rust target
-      run: rustup target add x86_64-unknown-linux-musl
+      run: rustup target add ${{ matrix.target }}
 
-    - name: Build static binary
-      run: cargo build --release --target x86_64-unknown-linux-musl
+    - name: Build binary
+      run: cargo build --release --target ${{ matrix.target }}
 
-    - name: Verify static binary
+    - name: Verify static binary (Linux)
+      if: matrix.os == 'ubuntu-latest'
       run: |
-        file target/x86_64-unknown-linux-musl/release/bz2zstd
-        if ! file target/x86_64-unknown-linux-musl/release/bz2zstd | grep -q "static"; then
+        file target/${{ matrix.target }}/release/${{ matrix.binary_name }}
+        if ! file target/${{ matrix.target }}/release/${{ matrix.binary_name }} | grep -q "static"; then
           echo "Error: Binary is not statically linked"
           exit 1
         fi
 
-    - name: Upload binary
+    - name: Prepare artifact
+      shell: bash
+      run: |
+        mkdir -p dist
+        cp target/${{ matrix.target }}/release/${{ matrix.binary_name }} dist/${{ matrix.binary_name }}
+
+    - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
-        name: bz2zstd-static
-        path: target/x86_64-unknown-linux-musl/release/bz2zstd
+        name: ${{ matrix.artifact_name }}
+        path: dist/${{ matrix.binary_name }}
