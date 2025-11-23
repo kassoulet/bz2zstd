@@ -7,6 +7,20 @@ INPUT_FILE="bench_scaling.bin"
 COMPRESSED_FILE="bench_scaling.bin.bz2"
 RESULT_FILE="benchmark_scaling_results.txt"
 
+# Check dependencies
+check_dependency() {
+    if ! command -v $1 &> /dev/null; then
+        echo "Error: Required command '$1' not found. Please install it."
+        exit 1
+    fi
+}
+
+check_dependency "cargo"
+check_dependency "dd"
+check_dependency "bzip2"
+check_dependency "nproc"
+check_dependency "/usr/bin/time"
+
 echo "Preparing scaling benchmark..." > $RESULT_FILE
 
 # Compile
@@ -31,15 +45,15 @@ echo "---------------------------------------------------" >> $RESULT_FILE
 run_bench() {
     CORES=$1
     CMD=$2
-    
+
     echo "Running with $CORES cores..."
     echo "[Cores: $CORES]" >> $RESULT_FILE
-    
+
     # Force thread count
     export RAYON_NUM_THREADS=$CORES
-    
+
     /usr/bin/time -f "Real: %e s, User: %U s, Sys: %S s, CPU: %P" $CMD 2>> $RESULT_FILE
-    
+
     echo "" >> $RESULT_FILE
 }
 

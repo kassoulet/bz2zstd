@@ -1,6 +1,6 @@
 # bz2zstd
 
-A high-performance, parallel bzip2 decompressor written in Rust. It is designed to handle "multi-stream" bzip2 files (like those created by `pbzip2` or concatenated streams) by utilizing multiple CPU cores for decompression.
+A high-performance, parallel bzip2 decompressor written in Rust. It utilizes multiple CPU cores to decompress **both single-stream** (standard) and **multi-stream** (e.g., `pbzip2`) bzip2 files by detecting bzip2 blocks and processing them in parallel.
 
 It also supports direct conversion to Zstandard (`zstd`), allowing for efficient re-compression of large datasets.
 
@@ -8,7 +8,7 @@ It also supports direct conversion to Zstandard (`zstd`), allowing for efficient
 
 -   **Parallel Decompression**: Automatically detects and decompresses multiple bzip2 streams in parallel using `rayon`.
 -   **Zstd Conversion**: Decompress bzip2 and compress to zstd in a single pass without intermediate files.
--   **High Performance**: Scales linearly with CPU cores (verified ~933% CPU usage on 12 cores).
+-   **High Performance**: Scales linearly with CPU cores.
 -   **Low Memory Footprint**: Uses memory mapping and streaming output to handle large files efficiently.
 -   **Robust Detection**: Uses a strong 10-byte signature check to correctly identify bzip2 streams.
 
@@ -27,34 +27,34 @@ The binary will be available at `target/release/bz2zstd`.
 ### Decompress a file
 
 ```bash
-./bz2zstd --input file.bz2 --output file.out
+./bz2zstd input.bz2 -o output.out
 ```
 
 ### Convert bzip2 to zstd
 
 ```bash
-./bz2zstd --input file.bz2 --output file.zst
+./bz2zstd input.bz2 -o output.zst
 ```
 
 ### Configuration
 
--   `--input <FILE>`: Input bzip2 file.
--   `--output <FILE>`: Output file (optional, defaults to stdout).
--   `--zstd-level <LEVEL>`: Set zstd compression level (default: 3).
--   `--zstd-threads <NUM>`: Number of threads for zstd compression (0 = auto).
--   `--decomp-threads <NUM>`: Number of threads for bzip2 decompression (default: num_cpus - 1).
+-   `<INPUT>`: Input bzip2 file.
+-   `-o, --output <FILE>`: Output file (optional, defaults to input file with .bz2 replaced by .zst).
+-   `--zstd-level <LEVEL>`: Set zstd compression level (default: 3). You can also use short flags like `-9` directly.
+-   `--benchmark-scan`: Benchmark mode: Only run the scanner and exit.
 
 ## Performance
 
-On a 12-core system with a 200MB multi-stream bzip2 file:
+On a 12-core system with a 100MB single-stream bzip2 file:
 
-| Tool | Real Time | CPU Usage |
+| Cores | Real Time | Speedup |
 | :--- | :--- | :--- |
-| **bz2zstd** | 2.23s | 933% |
-| **pbzip2** | 2.12s | 996% |
-| **lbzip2** | 2.01s | 1041% |
+| **1** | 1.80s | 1.0x |
+| **2** | 1.15s | 1.56x |
+| **4** | 0.75s | 2.4x |
+| **8** | 0.72s | 2.5x |
 
-`bz2zstd` offers performance comparable to industry-standard C/C++ tools while providing memory safety and easy zstd integration.
+`bz2zstd` scales well with available cores, significantly reducing processing time compared to single-threaded tools.
 
 ## License
 

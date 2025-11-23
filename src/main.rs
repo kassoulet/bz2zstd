@@ -27,8 +27,12 @@ struct Args {
     output: Option<PathBuf>,
 
     /// Zstd compression level (default = 3)
-    #[arg(long, default_value_t = 3)]
+    #[arg(short = 'z',long, default_value_t = 3)]
     zstd_level: i32,
+
+    /// Number of threads to use (default = number of logical cores)
+    #[arg(short = 'j', long)]
+    jobs: Option<usize>,
 
     /// Benchmark mode: Only run the scanner and exit
     #[arg(long)]
@@ -37,6 +41,13 @@ struct Args {
 
 fn main() -> Result<()> {
     let args = Args::parse();
+    
+    if let Some(jobs) = args.jobs {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(jobs)
+            .build_global()
+            .context("Failed to build global thread pool")?;
+    }
 
     let file = File::open(&args.input).context("Failed to open input file")?;
     let mmap = unsafe {
@@ -57,23 +68,23 @@ fn main() -> Result<()> {
     if args.benchmark_scan {
         let start = std::time::Instant::now();
         let scanner = Scanner::new();
-        
+
         let (tx, rx) = bounded(1000); // Buffer for chunk results
         let pool_ref = &scanner_pool;
         let mmap_ref = &mmap;
-        
+
         // Spawn scanner in background
         thread::scope(|s| {
             s.spawn(move || {
                 scanner.scan_stream(mmap_ref, 0, pool_ref, tx);
             });
-            
+
             let mut count = 0;
             // We don't need to reorder for benchmark, just count
             for (_, markers) in rx {
                 count += markers.len();
             }
-            
+
             let elapsed = start.elapsed();
             println!("Scanned {} markers in {:.2?}", count, elapsed);
             let mb = mmap.len() as f64 / 1024.0 / 1024.0;
@@ -86,8 +97,9 @@ fn main() -> Result<()> {
     // Bounded to avoid scanning too far ahead if workers are slow.
     // Small buffer to maintain cache locality.
     let (task_sender, task_receiver) = bounded::<(u64, u64)>(100);
-    
-    let (result_sender, result_receiver) = bounded::<(usize, Vec<u8>)>(rayon::current_num_threads() * 2);
+
+    let (result_sender, result_receiver) =
+        bounded::<(usize, Vec<u8>)>(rayon::current_num_threads() * 2);
 
     let writer_handle = thread::spawn(move || -> Result<()> {
         let output_path = if let Some(path) = args.output {
@@ -130,26 +142,26 @@ fn main() -> Result<()> {
     std::thread::scope(|s| {
         let mmap_ref = &mmap;
         let scanner_pool_ref = &scanner_pool;
-        
+
         // Scanner Thread
         s.spawn(move || {
             let scanner = Scanner::new();
             // Small buffer for chunks to prevent scanning too far ahead (cache thrashing)
-            let (chunk_tx, chunk_rx) = bounded(4); 
-            
+            let (chunk_tx, chunk_rx) = bounded(4);
+
             // Spawn the actual scanning in a background thread
             s.spawn(move || {
                 scanner.scan_stream(mmap_ref, 0, scanner_pool_ref, chunk_tx);
             });
-            
+
             // Consume and reorder
             let mut chunk_buffer: HashMap<usize, Vec<(u64, MarkerType)>> = HashMap::new();
             let mut next_chunk_idx = 0;
             let mut current_block_start: Option<u64> = None;
-            
+
             for (idx, markers) in chunk_rx {
                 chunk_buffer.insert(idx, markers);
-                
+
                 while let Some(markers) = chunk_buffer.remove(&next_chunk_idx) {
                     for (marker_pos, mtype) in markers {
                         match mtype {
@@ -174,11 +186,11 @@ fn main() -> Result<()> {
                     next_chunk_idx += 1;
                 }
             }
-            
+
             // If we have a dangling block start (EOF reached without EOS marker?)
             if let Some(start) = current_block_start {
-                 let end = (mmap_ref.len() as u64) * 8;
-                 let _ = task_sender.send((start, end));
+                let end = (mmap_ref.len() as u64) * 8;
+                let _ = task_sender.send((start, end));
             }
         });
 
@@ -192,38 +204,54 @@ fn main() -> Result<()> {
 
         let pb_ref = &pb;
 
-        task_receiver.into_iter().enumerate().par_bridge().try_for_each_init(
-            || (Vec::new(), Compressor::new(args.zstd_level).unwrap(), Vec::new()),
-            |(decomp_buf, compressor, wrapped_data), (idx, (start_bit, end_bit))| -> Result<()> {
-                wrapped_data.clear();
-                wrapped_data.extend_from_slice(b"BZh9"); // Minimal header
-                extract_bits(&mmap, start_bit, end_bit, wrapped_data);
+        task_receiver
+            .into_iter()
+            .enumerate()
+            .par_bridge()
+            .try_for_each_init(
+                || {
+                    (
+                        Vec::new(),
+                        Compressor::new(args.zstd_level).unwrap(),
+                        Vec::new(),
+                    )
+                },
+                |(decomp_buf, compressor, wrapped_data),
+                 (idx, (start_bit, end_bit))|
+                 -> Result<()> {
+                    wrapped_data.clear();
+                    wrapped_data.extend_from_slice(b"BZh9"); // Minimal header
+                    extract_bits(&mmap, start_bit, end_bit, wrapped_data);
 
-                // Decompress, handling potential UnexpectedEof for the last block
-                decomp_buf.clear();
-                let mut decoder = BzDecoder::new(&wrapped_data[..]);
-                match decoder.read_to_end(decomp_buf) {
-                    Ok(_) => {}, 
-                    Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {}, // Expected for last block without EOS
-                    Err(e) => return Err(e).context("Failed to decompress block"),
-                }
+                    // Decompress, handling potential UnexpectedEof for the last block
+                    decomp_buf.clear();
+                    let mut decoder = BzDecoder::new(&wrapped_data[..]);
+                    match decoder.read_to_end(decomp_buf) {
+                        Ok(_) => {}
+                        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {} // Expected for last block without EOS
+                        Err(e) => return Err(e).context("Failed to decompress block"),
+                    }
 
-                // Compress to Zstd
-                let compressed = compressor.compress(decomp_buf).context("Failed to compress chunk")?;
-                
-                result_sender.send((idx, compressed)).context("Failed to send compressed data")?;
-                
-                // Update progress bar
-                // We approximate progress by the input size processed
-                let input_bits = end_bit - start_bit;
-                pb_ref.inc(input_bits / 8);
+                    // Compress to Zstd
+                    let compressed = compressor
+                        .compress(decomp_buf)
+                        .context("Failed to compress chunk")?;
 
-                Ok(())
-            },
-        )?;
-        
+                    result_sender
+                        .send((idx, compressed))
+                        .context("Failed to send compressed data")?;
+
+                    // Update progress bar
+                    // We approximate progress by the input size processed
+                    let input_bits = end_bit - start_bit;
+                    pb_ref.inc(input_bits / 8);
+
+                    Ok(())
+                },
+            )?;
+
         pb.finish_with_message("Done!");
-        
+
         Ok::<(), anyhow::Error>(())
     })?;
 
