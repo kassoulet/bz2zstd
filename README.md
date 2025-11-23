@@ -24,46 +24,19 @@ The binary will be available at `target/release/bz2zstd`.
 
 ## Usage
 
-### Decompress a file
-
-```bash
-./bz2zstd input.bz2 -o output.out
-```
-
 ### Convert bzip2 to zstd
 
 ```bash
-./bz2zstd input.bz2 -o output.zst
+./bz2zstd input.bz2
 ```
 
 ### Configuration
 
 -   `<INPUT>`: Input bzip2 file.
 -   `-o, --output <FILE>`: Output file (optional, defaults to input file with .bz2 replaced by .zst).
--   `--zstd-level <LEVEL>`: Set zstd compression level (default: 3). You can also use short flags like `-9` directly.
+-   `--zstd-level <LEVEL>`: Set zstd compression level (default: 3). Use `-z` (e.g. `-z 9`).
 -   `--benchmark-scan`: Benchmark mode: Only run the scanner and exit.
-
-## Performance
-
-On a 12-core system with a 100MB single-stream bzip2 file:
-
-| Cores | Real Time | Speedup |
-| :--- | :--- | :--- |
-| **1** | 1.80s | 1.0x |
-| **2** | 1.15s | 1.56x |
-| **4** | 0.75s | 2.4x |
-| **8** | 0.72s | 2.5x |
-
-`bz2zstd` scales well with available cores, significantly reducing processing time compared to single-threaded tools.
 
 ## License
 
 MIT
-
-## Benchmarking
-
-A scaling benchmark script is provided in `scripts/benchmark_scaling.sh`. This script generates a random file, compresses it with `bzip2`, and then runs `bz2zstd` with varying thread counts to measure scaling performance.
-
-```bash
-./scripts/benchmark_scaling.sh
-```

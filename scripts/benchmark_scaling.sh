@@ -50,7 +50,7 @@ run_bench() {
     echo "[Cores: $CORES]" >> $RESULT_FILE
 
     # Force thread count
-    export RAYON_NUM_THREADS=$CORES
+    # Force thread count using -j flag
 
     /usr/bin/time -f "Real: %e s, User: %U s, Sys: %S s, CPU: %P" $CMD 2>> $RESULT_FILE
 
@@ -61,7 +61,7 @@ run_bench() {
 MAX_CORES=$(nproc)
 for CORES in 1 2 4 8 16; do
     if [ $CORES -le $MAX_CORES ]; then
-        run_bench $CORES "./target/release/bz2zstd $COMPRESSED_FILE --output out_scaling_${CORES}.zst"
+        run_bench $CORES "./target/release/bz2zstd -j $CORES $COMPRESSED_FILE --output out_scaling_${CORES}.zst"
     fi
 done
 

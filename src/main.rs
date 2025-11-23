@@ -27,7 +27,7 @@ struct Args {
     output: Option<PathBuf>,
 
     /// Zstd compression level (default = 3)
-    #[arg(short = 'z',long, default_value_t = 3)]
+    #[arg(short = 'z', long, default_value_t = 3)]
     zstd_level: i32,
 
     /// Number of threads to use (default = number of logical cores)
@@ -41,7 +41,7 @@ struct Args {
 
 fn main() -> Result<()> {
     let args = Args::parse();
-    
+
     if let Some(jobs) = args.jobs {
         rayon::ThreadPoolBuilder::new()
             .num_threads(jobs)
