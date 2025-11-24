@@ -1,5 +1,4 @@
 use anyhow::{Context, Result};
-use bzip2::read::BzDecoder;
 use clap::Parser;
 use crossbeam_channel::bounded;
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
@@ -7,13 +6,12 @@ use memmap2::MmapOptions;
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{Read, Write};
+use std::io::Write;
 use std::path::PathBuf;
 use std::thread;
 
-mod scanner;
 mod writer;
-use scanner::{extract_bits, MarkerType, Scanner};
+use parallel_bzip2::{decompress_block_into, scan_blocks, Scanner};
 use writer::OutputWriter;
 
 #[derive(Parser, Debug)]
@@ -58,7 +56,6 @@ fn main() -> Result<()> {
 
     // Create a separate thread pool for the scanner to avoid starvation/deadlock
     // with the worker pool (global) when using par_bridge.
-    // We use N threads to allow maximum burst throughput. OS scheduling handles contention.
     let scanner_threads = rayon::current_num_threads();
     let scanner_pool = rayon::ThreadPoolBuilder::new()
         .num_threads(scanner_threads)
@@ -74,13 +71,12 @@ fn main() -> Result<()> {
         let mmap_ref = &mmap;
 
         // Spawn scanner in background
-        thread::scope(|s| {
-            s.spawn(move || {
+        rayon::scope(|s| {
+            s.spawn(move |_| {
                 scanner.scan_stream(mmap_ref, 0, pool_ref, tx);
             });
 
             let mut count = 0;
-            // We don't need to reorder for benchmark, just count
             for (_, markers) in rx {
                 count += markers.len();
             }
@@ -92,11 +88,6 @@ fn main() -> Result<()> {
         });
         return Ok(());
     }
-
-    // Channel for tasks: (start_bit, end_bit)
-    // Bounded to avoid scanning too far ahead if workers are slow.
-    // Small buffer to maintain cache locality.
-    let (task_sender, task_receiver) = bounded::<(u64, u64)>(100);
 
     let (result_sender, result_receiver) =
         bounded::<(usize, Vec<u8>)>(rayon::current_num_threads() * 2);
@@ -139,60 +130,12 @@ fn main() -> Result<()> {
         Ok(())
     });
 
-    std::thread::scope(|s| {
+    rayon::scope(|s| {
         let mmap_ref = &mmap;
         let scanner_pool_ref = &scanner_pool;
 
-        // Scanner Thread
-        s.spawn(move || {
-            let scanner = Scanner::new();
-            // Small buffer for chunks to prevent scanning too far ahead (cache thrashing)
-            let (chunk_tx, chunk_rx) = bounded(4);
-
-            // Spawn the actual scanning in a background thread
-            s.spawn(move || {
-                scanner.scan_stream(mmap_ref, 0, scanner_pool_ref, chunk_tx);
-            });
-
-            // Consume and reorder
-            let mut chunk_buffer: HashMap<usize, Vec<(u64, MarkerType)>> = HashMap::new();
-            let mut next_chunk_idx = 0;
-            let mut current_block_start: Option<u64> = None;
-
-            for (idx, markers) in chunk_rx {
-                chunk_buffer.insert(idx, markers);
-
-                while let Some(markers) = chunk_buffer.remove(&next_chunk_idx) {
-                    for (marker_pos, mtype) in markers {
-                        match mtype {
-                            MarkerType::Block => {
-                                if let Some(start) = current_block_start {
-                                    if task_sender.send((start, marker_pos)).is_err() {
-                                        return;
-                                    }
-                                }
-                                current_block_start = Some(marker_pos);
-                            }
-                            MarkerType::Eos => {
-                                if let Some(start) = current_block_start {
-                                    if task_sender.send((start, marker_pos)).is_err() {
-                                        return;
-                                    }
-                                    current_block_start = None;
-                                }
-                            }
-                        }
-                    }
-                    next_chunk_idx += 1;
-                }
-            }
-
-            // If we have a dangling block start (EOF reached without EOS marker?)
-            if let Some(start) = current_block_start {
-                let end = (mmap_ref.len() as u64) * 8;
-                let _ = task_sender.send((start, end));
-            }
-        });
+        // Scanner Thread (managed by pbz2)
+        let task_receiver = scan_blocks(s, mmap_ref, scanner_pool_ref);
 
         // Worker Pool
         use zstd::bulk::Compressor;
@@ -219,18 +162,8 @@ fn main() -> Result<()> {
                 |(decomp_buf, compressor, wrapped_data),
                  (idx, (start_bit, end_bit))|
                  -> Result<()> {
-                    wrapped_data.clear();
-                    wrapped_data.extend_from_slice(b"BZh9"); // Minimal header
-                    extract_bits(&mmap, start_bit, end_bit, wrapped_data);
-
-                    // Decompress, handling potential UnexpectedEof for the last block
-                    decomp_buf.clear();
-                    let mut decoder = BzDecoder::new(&wrapped_data[..]);
-                    match decoder.read_to_end(decomp_buf) {
-                        Ok(_) => {}
-                        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {} // Expected for last block without EOS
-                        Err(e) => return Err(e).context("Failed to decompress block"),
-                    }
+                    decompress_block_into(&mmap, start_bit, end_bit, decomp_buf, wrapped_data)
+                        .context("Failed to decompress block")?;
 
                     // Compress to Zstd
                     let compressed = compressor
@@ -242,7 +175,6 @@ fn main() -> Result<()> {
                         .context("Failed to send compressed data")?;
 
                     // Update progress bar
-                    // We approximate progress by the input size processed
                     let input_bits = end_bit - start_bit;
                     pb_ref.inc(input_bits / 8);
 
