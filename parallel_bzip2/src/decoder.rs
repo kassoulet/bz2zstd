@@ -7,7 +7,7 @@ use rayon::ThreadPoolBuilder;
 use crate::{scan_blocks, decompress_block_into};
 
 pub struct Bz2Decoder {
-    data: Arc<[u8]>,
+    data: Arc<dyn AsRef<[u8]> + Send + Sync>,
     receiver: Receiver<(usize, Vec<u8>)>,
     buffer: Vec<u8>,
     buffer_pos: usize,
@@ -16,9 +16,18 @@ pub struct Bz2Decoder {
 }
 
 impl Bz2Decoder {
-    pub fn new(data: Arc<[u8]>) -> Self {
+    pub fn open<P: AsRef<std::path::Path>>(path: P) -> anyhow::Result<Self> {
+        let file = std::fs::File::open(path)?;
+        let mmap = unsafe { memmap2::MmapOptions::new().map(&file)? };
+        Ok(Self::new(Arc::new(mmap)))
+    }
+
+    pub fn new<T>(data: Arc<T>) -> Self 
+    where T: AsRef<[u8]> + Send + Sync + 'static 
+    {
         let (result_sender, result_receiver) = bounded(rayon::current_num_threads() * 2);
-        let data_clone = data.clone();
+        let data_ref: Arc<dyn AsRef<[u8]> + Send + Sync> = data;
+        let data_clone = data_ref.clone();
 
         // We spawn a thread to drive the scanning and decompression.
         // This thread will spawn the scanner and then the workers.
@@ -28,11 +37,9 @@ impl Bz2Decoder {
                 .build()
                 .unwrap();
 
-            // We need a scope for scan_blocks, but we are in a static thread now thanks to Arc.
-            // However, scan_blocks expects a scope.
-            // We can refactor scan_blocks or just use a scope here.
             pool.scope(|s| {
-                let task_receiver = scan_blocks(s, &data_clone, &pool);
+                let slice = data_clone.as_ref().as_ref();
+                let task_receiver = scan_blocks(s, slice, &pool);
 
                 // Worker loop
                 use rayon::prelude::*;
@@ -44,7 +51,7 @@ impl Bz2Decoder {
                         || Vec::new(), // scratch buffer
                         |scratch, (idx, (start_bit, end_bit))| -> anyhow::Result<()> {
                              let mut decomp_buf = Vec::new();
-                             decompress_block_into(&data_clone, start_bit, end_bit, &mut decomp_buf, scratch)?;
+                             decompress_block_into(slice, start_bit, end_bit, &mut decomp_buf, scratch)?;
                              result_sender.send((idx, decomp_buf)).unwrap();
                              Ok(())
                         }
@@ -53,7 +60,7 @@ impl Bz2Decoder {
         });
 
         Self {
-            data,
+            data: data_ref,
             receiver: result_receiver,
             buffer: Vec::new(),
             buffer_pos: 0,

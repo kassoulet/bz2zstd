@@ -21,14 +21,14 @@ fn bench_decode(c: &mut Criterion) {
     
     let file = File::open(bench_file).expect("Failed to open bench file");
     let mmap = unsafe { MmapOptions::new().map(&file).expect("Failed to mmap") };
-    let data: Arc<[u8]> = Arc::from(mmap.as_ref());
+    let mmap_arc = Arc::new(mmap);
 
     let mut group = c.benchmark_group("bzip2_decode");
-    group.throughput(Throughput::Bytes(mmap.len() as u64));
+    group.throughput(Throughput::Bytes(mmap_arc.len() as u64));
 
     group.bench_function("parallel_bzip2", |b| {
         b.iter(|| {
-            let mut decoder = Bz2Decoder::new(data.clone());
+            let mut decoder = Bz2Decoder::new(mmap_arc.clone());
             let mut buffer = [0u8; 8192];
             while decoder.read(&mut buffer).unwrap() > 0 {}
         })
@@ -36,7 +36,7 @@ fn bench_decode(c: &mut Criterion) {
 
     group.bench_function("bzip2_crate", |b| {
         b.iter(|| {
-            let mut decoder = bzip2::read::BzDecoder::new(&data[..]);
+            let mut decoder = bzip2::read::BzDecoder::new(&mmap_arc[..]);
             let mut buffer = [0u8; 8192];
             while decoder.read(&mut buffer).unwrap() > 0 {}
         })
