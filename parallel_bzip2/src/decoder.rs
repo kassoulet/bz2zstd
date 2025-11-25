@@ -1,13 +1,12 @@
-use std::io::{self, Read};
-use std::sync::Arc;
-use std::collections::HashMap;
 use crossbeam_channel::{bounded, Receiver};
 use rayon::ThreadPoolBuilder;
+use std::collections::HashMap;
+use std::io::{self, Read};
+use std::sync::Arc;
 
-use crate::{scan_blocks, decompress_block_into};
+use crate::{decompress_block_into, scan_blocks};
 
 pub struct Bz2Decoder {
-    data: Arc<dyn AsRef<[u8]> + Send + Sync>,
     receiver: Receiver<(usize, Vec<u8>)>,
     buffer: Vec<u8>,
     buffer_pos: usize,
@@ -22,8 +21,9 @@ impl Bz2Decoder {
         Ok(Self::new(Arc::new(mmap)))
     }
 
-    pub fn new<T>(data: Arc<T>) -> Self 
-    where T: AsRef<[u8]> + Send + Sync + 'static 
+    pub fn new<T>(data: Arc<T>) -> Self
+    where
+        T: AsRef<[u8]> + Send + Sync + 'static,
     {
         let (result_sender, result_receiver) = bounded(rayon::current_num_threads() * 2);
         let data_ref: Arc<dyn AsRef<[u8]> + Send + Sync> = data;
@@ -43,24 +43,29 @@ impl Bz2Decoder {
 
                 // Worker loop
                 use rayon::prelude::*;
-                task_receiver
+                let _ = task_receiver
                     .into_iter()
                     .enumerate()
                     .par_bridge()
                     .try_for_each_init(
-                        || Vec::new(), // scratch buffer
+                        Vec::new, // scratch buffer - changed from closure to function
                         |scratch, (idx, (start_bit, end_bit))| -> anyhow::Result<()> {
-                             let mut decomp_buf = Vec::new();
-                             decompress_block_into(slice, start_bit, end_bit, &mut decomp_buf, scratch)?;
-                             result_sender.send((idx, decomp_buf)).unwrap();
-                             Ok(())
-                        }
+                            let mut decomp_buf = Vec::new();
+                            decompress_block_into(
+                                slice,
+                                start_bit,
+                                end_bit,
+                                &mut decomp_buf,
+                                scratch,
+                            )?;
+                            result_sender.send((idx, decomp_buf)).unwrap();
+                            Ok(())
+                        },
                     );
             });
         });
 
         Self {
-            data: data_ref,
             receiver: result_receiver,
             buffer: Vec::new(),
             buffer_pos: 0,

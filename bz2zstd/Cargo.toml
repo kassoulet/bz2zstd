@@ -13,5 +13,3 @@ crossbeam-channel = "0.5"
 zstd = { version = "0.13", features = ["zstdmt"] }
 indicatif = "0.17"
 parallel_bzip2 = { path = "../parallel_bzip2" }
-
-

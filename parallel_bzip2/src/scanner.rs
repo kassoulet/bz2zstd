@@ -102,6 +102,12 @@ impl Scanner {
     }
 }
 
+impl Default for Scanner {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Extracts a range of bits from the byte slice and writes them into the provided buffer.
 /// The output is byte-aligned (starts at bit 0 of the first output byte).
 /// If the number of bits is not a multiple of 8, the last byte is padded with zeros in the low bits.

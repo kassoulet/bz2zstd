@@ -1,14 +1,14 @@
-pub mod scanner;
 pub mod decoder;
-pub use scanner::{extract_bits, MarkerType, Scanner};
+pub mod scanner;
 pub use decoder::Bz2Decoder;
+pub use scanner::{extract_bits, MarkerType, Scanner};
 
 use anyhow::{Context, Result};
 use bzip2::read::BzDecoder;
 use crossbeam_channel::bounded;
+use rayon::Scope;
 use std::collections::HashMap;
 use std::io::Read;
-use rayon::Scope;
 
 /// Spawns a scanner thread within the given scope and returns a receiver for block locations (start_bit, end_bit).
 pub fn scan_blocks<'scope, 'env: 'scope>(
