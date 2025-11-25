@@ -1,1 +1,15 @@
 /target
+
+# Test and benchmark artifacts
+*.bin
+*.bz2
+*.zst
+*.svg
+*.txt
+*.sh
+
+# Benchmark and test specific files
+bench_scaling.*
+test_e2e_*.*
+benchmark_scaling.*
+output.*
