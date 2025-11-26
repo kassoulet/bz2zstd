@@ -1,0 +1,36 @@
+[package]
+name = "parallel-bzip2-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+arbitrary = { version = "1", features = ["derive"] }
+
+[dependencies.parallel_bzip2]
+path = "../parallel_bzip2"
+
+[[bin]]
+name = "fuzz_scanner"
+path = "fuzz_targets/fuzz_scanner.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_decoder"
+path = "fuzz_targets/fuzz_decoder.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_block_decompress"
+path = "fuzz_targets/fuzz_block_decompress.rs"
+test = false
+doc = false
+bench = false

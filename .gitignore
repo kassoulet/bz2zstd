@@ -13,3 +13,5 @@ bench_scaling.*
 test_e2e_*.*
 benchmark_scaling.*
 output.*
+fuzz/corpus/
+fuzz/target/
