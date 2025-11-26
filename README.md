@@ -7,10 +7,15 @@ It also supports direct conversion to Zstandard (`zstd`), allowing for efficient
 ## Features
 
 -   **Parallel Decompression**: Automatically detects and decompresses multiple bzip2 streams in parallel using `rayon`.
+-   **Single & Multi-Stream Support**: Efficiently handles both standard single-stream and multi-stream (e.g., `pbzip2`) bzip2 files.
 -   **Zstd Conversion**: Decompress bzip2 and compress to zstd in a single pass without intermediate files.
 -   **High Performance**: Scales linearly with CPU cores.
+-   **Thread Control**: Configure the number of worker threads with the `-j` flag.
 -   **Low Memory Footprint**: Uses memory mapping and streaming output to handle large files efficiently.
+-   **Progress Indication**: Real-time progress bar during conversion.
 -   **Robust Detection**: Uses a strong 10-byte signature check to correctly identify bzip2 streams.
+-   **Benchmark Mode**: Scanner-only benchmark mode for performance testing.
+-   **Fuzz Testing**: Comprehensive fuzz testing infrastructure for reliability.
 
 ## Library
 
@@ -27,7 +32,7 @@ See `parallel_bzip2/README.md` for more details.
 
 ```bash
 git clone <repository_url>
-cd bz2zstd
+cd parallel-bz2
 cargo build --release
 ```
 
@@ -45,7 +50,8 @@ The binary will be available at `target/release/bz2zstd`.
 
 -   `<INPUT>`: Input bzip2 file.
 -   `-o, --output <FILE>`: Output file (optional, defaults to input file with .bz2 replaced by .zst).
--   `--zstd-level <LEVEL>`: Set zstd compression level (default: 3). Use `-z` (e.g. `-z 9`).
+-   `-z, --zstd-level <LEVEL>`: Set zstd compression level (default: 3, e.g., `-z 9`).
+-   `-j, --jobs <N>`: Number of threads to use (default: number of logical cores).
 -   `--benchmark-scan`: Benchmark mode: Only run the scanner and exit.
 
 ## License
