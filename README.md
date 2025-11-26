@@ -12,6 +12,17 @@ It also supports direct conversion to Zstandard (`zstd`), allowing for efficient
 -   **Low Memory Footprint**: Uses memory mapping and streaming output to handle large files efficiently.
 -   **Robust Detection**: Uses a strong 10-byte signature check to correctly identify bzip2 streams.
 
+## Library
+
+The core parallel decompression logic is available as a standalone library crate: `parallel_bzip2`.
+
+```toml
+[dependencies]
+parallel_bzip2 = { path = "parallel_bzip2" }
+```
+
+See `parallel_bzip2/README.md` for more details.
+
 ## Installation
 
 ```bash

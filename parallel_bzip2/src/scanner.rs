@@ -51,13 +51,18 @@ impl Scanner {
         &self,
         data: &[u8],
         base_offset_bits: u64,
-        pool: &rayon::ThreadPool,
         sender: crossbeam_channel::Sender<(usize, Vec<(u64, MarkerType)>)>,
     ) {
         let chunk_size = 1024 * 1024; // 1MB chunks for cache locality
         let overlap = 8;
         let len = data.len();
         let num_chunks = len.div_ceil(chunk_size);
+
+        // Create our own thread pool to avoid deadlock with caller's pool
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(rayon::current_num_threads())
+            .build()
+            .unwrap();
 
         // Use pool.scope to allow borrowing `data` in the closure.
         // This blocks until all tasks are finished, but since we are in a dedicated
@@ -230,7 +235,7 @@ mod tests {
         // Run scan_stream in a scope
         std::thread::scope(|s| {
             s.spawn(|| {
-                scanner.scan_stream(data, 0, &pool, tx);
+                scanner.scan_stream(data, 0, tx);
             });
         });
 

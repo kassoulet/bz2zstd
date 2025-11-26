@@ -104,9 +104,33 @@ fn test_e2e_large_file() {
     let zstd_file = "test_e2e_large.zst";
     let out_file = "test_e2e_large_out.bin";
 
-    // Generate data and compress with pbzip2 (creates multiple streams)
-    generate_data(test_file, 2); // 2MB
-    compress_pbzip2(test_file);
+    // Generate 5MB of data (enough to have multiple blocks)
+    generate_data(test_file, 5);
+
+    // Compress with bzip2 (single stream usually, unless pbzip2 used)
+    // Use standard bzip2 to ensure single stream if possible, or pbzip2 is fine too.
+    // If we use pbzip2, it creates multiple streams.
+    // To test block splitting, we need a single large stream.
+    // `bzip2` is single threaded and creates one stream.
+    // But `bzip2` might not be installed or slow.
+    // `pbzip2` with `-p1` creates one stream? No, it still splits.
+    // Actually, `pbzip2` creates independent streams.
+    // To test our block splitter, we need a file that `find_streams` sees as 1 stream,
+    // but `find_blocks` splits.
+    // Standard `bzip2` does this.
+
+    let status = Command::new("bzip2")
+        .arg("-k")
+        .arg("-f")
+        .arg(test_file)
+        .status();
+
+    if status.is_err() || !status.unwrap().success() {
+        // Fallback to pbzip2 if bzip2 not found, but then we might not test block splitting of single stream.
+        // But we still test correctness.
+        eprintln!("bzip2 not found or failed, trying pbzip2");
+        compress_pbzip2(test_file);
+    }
 
     let orig_md5 = calculate_md5(test_file);
 

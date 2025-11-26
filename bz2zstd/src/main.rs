@@ -1,17 +1,17 @@
 use anyhow::{Context, Result};
+use bzip2::read::BzDecoder;
 use clap::Parser;
 use crossbeam_channel::bounded;
-use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use memmap2::MmapOptions;
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::thread;
 
 mod writer;
-use parallel_bzip2::{decompress_block_into, scan_blocks, Scanner};
+use parallel_bzip2::{extract_bits, MarkerType, Scanner};
 use writer::OutputWriter;
 
 #[derive(Parser, Debug)]
@@ -40,6 +40,7 @@ struct Args {
 fn main() -> Result<()> {
     let args = Args::parse();
 
+    // Configure global thread pool if jobs is specified
     if let Some(jobs) = args.jobs {
         rayon::ThreadPoolBuilder::new()
             .num_threads(jobs)
@@ -56,27 +57,24 @@ fn main() -> Result<()> {
 
     // Create a separate thread pool for the scanner to avoid starvation/deadlock
     // with the worker pool (global) when using par_bridge.
-    let scanner_threads = rayon::current_num_threads();
-    let scanner_pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(scanner_threads)
-        .build()
-        .context("Failed to create scanner thread pool")?;
+    // We use N threads to allow maximum burst throughput. OS scheduling handles contention.
+    // Note: Scanner creates its own internal thread pool.
 
     if args.benchmark_scan {
         let start = std::time::Instant::now();
         let scanner = Scanner::new();
 
         let (tx, rx) = bounded(1000); // Buffer for chunk results
-        let pool_ref = &scanner_pool;
         let mmap_ref = &mmap;
 
         // Spawn scanner in background
-        rayon::scope(|s| {
-            s.spawn(move |_| {
-                scanner.scan_stream(mmap_ref, 0, pool_ref, tx);
+        thread::scope(|s| {
+            s.spawn(move || {
+                scanner.scan_stream(mmap_ref, 0, tx);
             });
 
             let mut count = 0;
+            // We don't need to reorder for benchmark, just count
             for (_, markers) in rx {
                 count += markers.len();
             }
@@ -88,6 +86,11 @@ fn main() -> Result<()> {
         });
         return Ok(());
     }
+
+    // Channel for tasks: (start_bit, end_bit)
+    // Bounded to avoid scanning too far ahead if workers are slow.
+    // Small buffer to maintain cache locality.
+    let (task_sender, task_receiver) = bounded::<(u64, u64)>(100);
 
     let (result_sender, result_receiver) =
         bounded::<(usize, Vec<u8>)>(rayon::current_num_threads() * 2);
@@ -130,40 +133,83 @@ fn main() -> Result<()> {
         Ok(())
     });
 
-    rayon::scope(|s| {
+    std::thread::scope(|s| {
         let mmap_ref = &mmap;
-        let scanner_pool_ref = &scanner_pool;
 
-        // Scanner Thread (managed by pbz2)
-        let task_receiver = scan_blocks(s, mmap_ref, scanner_pool_ref);
+        // Scanner Thread
+        s.spawn(move || {
+            let scanner = Scanner::new();
+            // Small buffer for chunks to prevent scanning too far ahead (cache thrashing)
+            let (chunk_tx, chunk_rx) = bounded(4);
+
+            // Spawn the actual scanning in a background thread
+            s.spawn(move || {
+                scanner.scan_stream(mmap_ref, 0, chunk_tx);
+            });
+
+            // Consume and reorder
+            let mut chunk_buffer: HashMap<usize, Vec<(u64, MarkerType)>> = HashMap::new();
+            let mut next_chunk_idx = 0;
+            let mut current_block_start: Option<u64> = None;
+
+            for (idx, markers) in chunk_rx {
+                chunk_buffer.insert(idx, markers);
+
+                while let Some(markers) = chunk_buffer.remove(&next_chunk_idx) {
+                    for (marker_pos, mtype) in markers {
+                        match mtype {
+                            MarkerType::Block => {
+                                if let Some(start) = current_block_start {
+                                    if task_sender.send((start, marker_pos)).is_err() {
+                                        return;
+                                    }
+                                }
+                                current_block_start = Some(marker_pos);
+                            }
+                            MarkerType::Eos => {
+                                if let Some(start) = current_block_start {
+                                    if task_sender.send((start, marker_pos)).is_err() {
+                                        return;
+                                    }
+                                    current_block_start = None;
+                                }
+                            }
+                        }
+                    }
+                    next_chunk_idx += 1;
+                }
+            }
+
+            // If we have a dangling block start (EOF reached without EOS marker?)
+            if let Some(start) = current_block_start {
+                let end = (mmap_ref.len() as u64) * 8;
+                let _ = task_sender.send((start, end));
+            }
+        });
 
         // Worker Pool
         use zstd::bulk::Compressor;
-
-        let pb = ProgressBar::new(mmap.len() as u64);
-        pb.set_draw_target(ProgressDrawTarget::stderr_with_hz(5));
-        pb.set_style(ProgressStyle::with_template("{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {bytes}/{total_bytes} ({eta})")
-            .unwrap());
-
-        let pb_ref = &pb;
-
         task_receiver
             .into_iter()
             .enumerate()
             .par_bridge()
             .try_for_each_init(
-                || {
-                    (
-                        Vec::new(),
-                        Compressor::new(args.zstd_level).unwrap(),
-                        Vec::new(),
-                    )
-                },
-                |(decomp_buf, compressor, wrapped_data),
-                 (idx, (start_bit, end_bit))|
-                 -> Result<()> {
-                    decompress_block_into(&mmap, start_bit, end_bit, decomp_buf, wrapped_data)
-                        .context("Failed to decompress block")?;
+                || (Vec::new(), Compressor::new(args.zstd_level).unwrap()),
+                |(decomp_buf, compressor), (idx, (start_bit, end_bit))| -> Result<()> {
+                    let mut block_data = Vec::new();
+                    extract_bits(&mmap, start_bit, end_bit, &mut block_data);
+                    let mut wrapped_data = Vec::with_capacity(4 + block_data.len());
+                    wrapped_data.extend_from_slice(b"BZh9"); // Minimal header
+                    wrapped_data.append(&mut block_data);
+
+                    // Decompress, handling potential UnexpectedEof for the last block
+                    decomp_buf.clear();
+                    let mut decoder = BzDecoder::new(&wrapped_data[..]);
+                    match decoder.read_to_end(decomp_buf) {
+                        Ok(_) => {}
+                        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {} // Expected for last block without EOS
+                        Err(e) => return Err(e).context("Failed to decompress block"),
+                    }
 
                     // Compress to Zstd
                     let compressed = compressor
@@ -173,16 +219,9 @@ fn main() -> Result<()> {
                     result_sender
                         .send((idx, compressed))
                         .context("Failed to send compressed data")?;
-
-                    // Update progress bar
-                    let input_bits = end_bit - start_bit;
-                    pb_ref.inc(input_bits / 8);
-
                     Ok(())
                 },
             )?;
-
-        pb.finish_with_message("Done!");
 
         Ok::<(), anyhow::Error>(())
     })?;

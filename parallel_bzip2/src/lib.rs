@@ -6,26 +6,27 @@ pub use scanner::{extract_bits, MarkerType, Scanner};
 use anyhow::{Context, Result};
 use bzip2::read::BzDecoder;
 use crossbeam_channel::bounded;
-use rayon::Scope;
 use std::collections::HashMap;
 use std::io::Read;
 
-/// Spawns a scanner thread within the given scope and returns a receiver for block locations (start_bit, end_bit).
-pub fn scan_blocks<'scope, 'env: 'scope>(
-    scope: &Scope<'scope>,
-    data: &'env [u8],
-    pool: &'env rayon::ThreadPool,
-) -> crossbeam_channel::Receiver<(u64, u64)> {
+/// Spawns a scanner thread and returns a receiver for block locations (start_bit, end_bit).
+pub fn scan_blocks(data: &[u8]) -> crossbeam_channel::Receiver<(u64, u64)> {
     let (task_sender, task_receiver) = bounded(100);
 
-    scope.spawn(move |s| {
+    // Clone data into an Arc so we can share it across threads
+    let data_vec = data.to_vec();
+    let data_arc = std::sync::Arc::new(data_vec);
+    let data_clone = data_arc.clone();
+
+    std::thread::spawn(move || {
         let scanner = Scanner::new();
         // Small buffer for chunks to prevent scanning too far ahead (cache thrashing)
         let (chunk_tx, chunk_rx) = bounded(4);
 
         // Spawn the actual scanning in a background thread
-        s.spawn(move |_| {
-            scanner.scan_stream(data, 0, pool, chunk_tx);
+        let scan_data = data_clone.clone();
+        let _scan_handle = std::thread::spawn(move || {
+            scanner.scan_stream(&scan_data, 0, chunk_tx);
         });
 
         // Consume and reorder
@@ -63,7 +64,7 @@ pub fn scan_blocks<'scope, 'env: 'scope>(
 
         // If we have a dangling block start (EOF reached without EOS marker?)
         if let Some(start) = current_block_start {
-            let end = (data.len() as u64) * 8;
+            let end = (data_clone.len() as u64) * 8;
             let _ = task_sender.send((start, end));
         }
     });
@@ -100,4 +101,13 @@ pub fn decompress_block_into(
         Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => Ok(()),
         Err(e) => Err(e).context("Failed to decompress block"),
     }
+}
+
+/// Helper function to decompress a bz2 file and return the decompressed data.
+/// This is primarily used for testing.
+pub fn parallel_bzip2_cat<P: AsRef<std::path::Path>>(path: P) -> Result<Vec<u8>> {
+    let mut decoder = Bz2Decoder::open(path)?;
+    let mut data = Vec::new();
+    decoder.read_to_end(&mut data)?;
+    Ok(data)
 }

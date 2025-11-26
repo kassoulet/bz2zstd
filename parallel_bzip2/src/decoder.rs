@@ -1,5 +1,4 @@
 use crossbeam_channel::{bounded, Receiver};
-use rayon::ThreadPoolBuilder;
 use std::collections::HashMap;
 use std::io::{self, Read};
 use std::sync::Arc;
@@ -7,6 +6,8 @@ use std::sync::Arc;
 use crate::{decompress_block_into, scan_blocks};
 
 pub struct Bz2Decoder {
+    #[allow(dead_code)] // Kept to ensure data lifetime
+    data: Arc<dyn AsRef<[u8]> + Send + Sync>,
     receiver: Receiver<(usize, Vec<u8>)>,
     buffer: Vec<u8>,
     buffer_pos: usize,
@@ -29,43 +30,30 @@ impl Bz2Decoder {
         let data_ref: Arc<dyn AsRef<[u8]> + Send + Sync> = data;
         let data_clone = data_ref.clone();
 
-        // We spawn a thread to drive the scanning and decompression.
-        // This thread will spawn the scanner and then the workers.
+        // We spawn a thread to drive the decompression.
         std::thread::spawn(move || {
-            let pool = ThreadPoolBuilder::new()
-                .num_threads(rayon::current_num_threads())
-                .build()
-                .unwrap();
+            let slice = data_clone.as_ref().as_ref();
+            let task_receiver = scan_blocks(slice);
 
-            pool.scope(|s| {
-                let slice = data_clone.as_ref().as_ref();
-                let task_receiver = scan_blocks(s, slice, &pool);
-
-                // Worker loop
-                use rayon::prelude::*;
-                let _ = task_receiver
-                    .into_iter()
-                    .enumerate()
-                    .par_bridge()
-                    .try_for_each_init(
-                        Vec::new, // scratch buffer - changed from closure to function
-                        |scratch, (idx, (start_bit, end_bit))| -> anyhow::Result<()> {
-                            let mut decomp_buf = Vec::new();
-                            decompress_block_into(
-                                slice,
-                                start_bit,
-                                end_bit,
-                                &mut decomp_buf,
-                                scratch,
-                            )?;
-                            result_sender.send((idx, decomp_buf)).unwrap();
-                            Ok(())
-                        },
-                    );
-            });
+            // Worker loop
+            use rayon::prelude::*;
+            let _ = task_receiver
+                .into_iter()
+                .enumerate()
+                .par_bridge()
+                .try_for_each_init(
+                    Vec::new, // scratch buffer
+                    |scratch, (idx, (start_bit, end_bit))| -> anyhow::Result<()> {
+                        let mut decomp_buf = Vec::new();
+                        decompress_block_into(slice, start_bit, end_bit, &mut decomp_buf, scratch)?;
+                        result_sender.send((idx, decomp_buf)).unwrap();
+                        Ok(())
+                    },
+                );
         });
 
         Self {
+            data: data_ref,
             receiver: result_receiver,
             buffer: Vec::new(),
             buffer_pos: 0,
