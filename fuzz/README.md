@@ -61,27 +61,43 @@ cargo +nightly fuzz run fuzz_block_decompress
 
 ## Running Fuzz Tests
 
+### Recommended Settings to Prevent OOM
+
+The fuzz targets have built-in protections against OOM:
+- **Input size limit**: 1 MB maximum
+- **Timeout**: 1 second per test case
+- **Output limit**: 10 MB for decoder
+- **Block limit**: 1000 blocks for scanner
+
+For additional safety, set an RSS memory limit:
+
+```bash
+# Limit memory usage to 1 GB
+cargo +nightly fuzz run fuzz_scanner -- -rss_limit_mb=1024
+cargo +nightly fuzz run fuzz_decoder -- -rss_limit_mb=1024
+```
+
 ### Quick Test (30 seconds each)
 
 ```bash
-cargo +nightly fuzz run fuzz_scanner -- -max_total_time=30
-cargo +nightly fuzz run fuzz_decoder -- -max_total_time=30
-cargo +nightly fuzz run fuzz_block_decompress -- -max_total_time=30
+cargo +nightly fuzz run fuzz_scanner -- -max_total_time=30 -rss_limit_mb=1024
+cargo +nightly fuzz run fuzz_decoder -- -max_total_time=30 -rss_limit_mb=1024
+cargo +nightly fuzz run fuzz_block_decompress -- -max_total_time=30 -rss_limit_mb=1024
 ```
 
 ### Extended Fuzzing Session
 
-For thorough testing, run for at least 1 hour:
+For thorough testing, run for at least 1 hour with memory limits:
 
 ```bash
-# Run scanner fuzzing for 1 hour
-cargo +nightly fuzz run fuzz_scanner -- -max_total_time=3600
+# Run scanner fuzzing for 1 hour with 1GB memory limit
+cargo +nightly fuzz run fuzz_scanner -- -max_total_time=3600 -rss_limit_mb=1024
 
-# Run decoder fuzzing for 1 hour
-cargo +nightly fuzz run fuzz_decoder -- -max_total_time=3600
+# Run decoder fuzzing for 1 hour with 1GB memory limit
+cargo +nightly fuzz run fuzz_decoder -- -max_total_time=3600 -rss_limit_mb=1024
 
-# Run block decompression fuzzing for 1 hour
-cargo +nightly fuzz run fuzz_block_decompress -- -max_total_time=3600
+# Run block decompression fuzzing for 1 hour with 1GB memory limit
+cargo +nightly fuzz run fuzz_block_decompress -- -max_total_time=3600 -rss_limit_mb=1024
 ```
 
 ### Parallel Fuzzing
@@ -195,9 +211,16 @@ cargo +nightly fuzz --version
 
 ### Out of Memory Errors
 
-1. Reduce input size limits in fuzz targets
-2. Set RSS limit: `-- -rss_limit_mb=2048`
-3. Reduce number of workers
+The fuzz targets have built-in OOM protections:
+- Input size limited to 1 MB
+- 1-second timeout per test case
+- Output limited to 10 MB for decoder
+- Block collection limited to 1000 for scanner
+
+If you still encounter OOM:
+1. Set a stricter RSS limit: `-- -rss_limit_mb=512`
+2. Reduce number of workers: `-- -workers=1`
+3. Monitor memory usage with `htop` or similar tools
 
 ## Further Reading
 
