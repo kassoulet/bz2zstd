@@ -154,13 +154,124 @@ View the debug output of the crashing input:
 cargo +nightly fuzz fmt fuzz_decoder artifacts/fuzz_decoder/crash-<hash>
 ```
 
-## Coverage Analysis
+## Memory Leak Detection
 
-Generate coverage information:
+LibFuzzer includes LeakSanitizer (LSan) by default, which detects memory leaks at the end of each fuzzing run. However, you may see messages like "libFuzzer disabled leak detection after every mutation" - this is normal when the target accumulates memory in global state.
+
+### Using trace_malloc
+
+To get detailed malloc/free traces and identify memory accumulation:
 
 ```bash
-cargo +nightly fuzz coverage fuzz_decoder
+# Run with malloc tracing (level 1 = basic, 2 = detailed)
+cargo +nightly fuzz run fuzz_decoder -- -trace_malloc=2 -runs=100
 ```
+
+This will show every allocation and deallocation, helping you identify:
+- Memory that's allocated but never freed
+- Gradual memory accumulation over iterations
+- Unexpected allocation patterns
+
+### LeakSanitizer at Shutdown
+
+Even with per-mutation leak detection disabled, LSan still runs at process shutdown:
+
+```bash
+# Run for a fixed number of iterations to trigger shutdown leak check
+cargo +nightly fuzz run fuzz_decoder -- -runs=1000
+```
+
+If there are leaks, you'll see a report like:
+```
+=================================================================
+==12345==ERROR: LeakSanitizer: detected memory leaks
+
+Direct leak of 1024 bytes in 1 object(s) allocated from:
+    #0 0x... in malloc
+    #1 0x... in your_function
+    ...
+```
+
+### Using Valgrind for Leak Detection
+
+For more detailed leak analysis, use Valgrind (slower but more thorough):
+
+```bash
+# Build without sanitizers for Valgrind compatibility
+cd fuzz
+cargo build --release --bin fuzz_decoder
+
+# Run with Valgrind
+valgrind --leak-check=full --show-leak-kinds=all \
+  ./target/release/fuzz_decoder \
+  corpus/fuzz_decoder/some_test_case
+```
+
+### Monitoring Memory Growth
+
+Watch for gradual memory growth during fuzzing:
+
+```bash
+# In one terminal, start fuzzing
+cargo +nightly fuzz run fuzz_decoder -- -rss_limit_mb=1024
+
+# In another terminal, monitor memory usage
+watch -n 1 'ps aux | grep fuzz_decoder | grep -v grep'
+```
+
+Look for:
+- **Steady RSS growth**: Indicates a memory leak
+- **Stable RSS**: Normal behavior (memory is being reused)
+- **Periodic spikes**: May indicate temporary allocations that are cleaned up
+
+### Using heaptrack (Linux)
+
+For detailed heap profiling:
+
+```bash
+# Install heaptrack
+sudo apt-get install heaptrack
+
+# Profile a fuzz target
+cd fuzz
+cargo build --release --bin fuzz_decoder
+heaptrack ./target/release/fuzz_decoder corpus/fuzz_decoder/some_test_case
+
+# Analyze results
+heaptrack_gui heaptrack.fuzz_decoder.*.gz
+```
+
+### Interpreting Results
+
+**Normal behavior:**
+- Memory usage stabilizes after initial corpus loading
+- RSS stays relatively constant during fuzzing
+- Small fluctuations are expected
+
+**Memory leak indicators:**
+- Continuous RSS growth over time
+- RSS approaching the `-rss_limit_mb` limit
+- "Out of memory" errors
+- Slowdown over time as memory fills up
+
+### Fixing Memory Leaks
+
+Common causes in fuzz targets:
+1. **Thread accumulation**: Spawned threads not being joined
+2. **Channel accumulation**: Unbounded channel buffers
+3. **Global state**: Data structures that grow indefinitely
+4. **Forgotten cleanup**: Resources not being dropped
+
+Example fix for thread accumulation:
+```rust
+// Before (leaks threads)
+std::thread::spawn(|| { /* work */ });
+
+// After (joins threads)
+let handle = std::thread::spawn(|| { /* work */ });
+handle.join().ok();
+```
+
 
 ## Performance Tips
 
