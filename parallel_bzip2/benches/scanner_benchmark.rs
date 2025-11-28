@@ -1,16 +1,13 @@
-use criterion::{criterion_group, criterion_main, Criterion, Throughput};
-use memmap2::MmapOptions;
-use parallel_bzip2::Bz2Decoder;
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use parallel_bzip2::scan_blocks;
 use pprof::criterion::{Output, PProfProfiler};
-use std::fs::{self, File};
-use std::io::Read;
+use std::fs;
 use std::path::Path;
 use std::process::Command;
-use std::sync::Arc;
 
 /// Generate a test file of the specified size in MB
 fn generate_test_file(size_mb: usize) -> String {
-    let filename = format!("../bench_data_{}_mb.bin", size_mb);
+    let filename = format!("../bench_scan_{}_mb.bin", size_mb);
     let bz2_filename = format!("{}.bz2", filename);
 
     // Skip if already exists
@@ -18,7 +15,7 @@ fn generate_test_file(size_mb: usize) -> String {
         return bz2_filename;
     }
 
-    println!("Generating {}MB test file...", size_mb);
+    println!("Generating {}MB test file for scanner...", size_mb);
 
     // Create random data
     let status = Command::new("dd")
@@ -50,54 +47,40 @@ fn generate_test_file(size_mb: usize) -> String {
     bz2_filename
 }
 
-fn bench_decode_size(c: &mut Criterion, size_mb: usize, name: &str) {
-    let bz2_file = generate_test_file(size_mb);
-    let file = File::open(&bz2_file).expect("Failed to open bench file");
-    let mmap = unsafe { MmapOptions::new().map(&file).expect("Failed to mmap") };
-    let mmap_arc = Arc::new(mmap);
+fn bench_scanner(c: &mut Criterion) {
+    let mut group = c.benchmark_group("scanner");
 
-    let mut group = c.benchmark_group(name);
-    group.throughput(Throughput::Bytes(mmap_arc.len() as u64));
-    group.sample_size(10); // Reduce sample size for larger files
+    for size_mb in [1, 10, 50].iter() {
+        let bz2_file = generate_test_file(*size_mb);
+        let data = std::fs::read(&bz2_file).expect("Failed to read test file");
 
-    group.bench_function("parallel_bzip2", |b| {
-        b.iter(|| {
-            let mut decoder = Bz2Decoder::new(mmap_arc.clone());
-            let mut buffer = [0u8; 8192];
-            while decoder.read(&mut buffer).unwrap() > 0 {}
-        })
-    });
-
-    group.bench_function("bzip2_crate", |b| {
-        b.iter(|| {
-            let mut decoder = bzip2::read::BzDecoder::new(&mmap_arc[..]);
-            let mut buffer = [0u8; 8192];
-            while decoder.read(&mut buffer).unwrap() > 0 {}
-        })
-    });
+        group.throughput(Throughput::Bytes(data.len() as u64));
+        group.bench_with_input(
+            BenchmarkId::from_parameter(format!("{}MB", size_mb)),
+            &data,
+            |b, data| {
+                b.iter(|| {
+                    let receiver = scan_blocks(data);
+                    let mut count = 0;
+                    while receiver.recv().is_ok() {
+                        count += 1;
+                    }
+                    count
+                })
+            },
+        );
+    }
 
     group.finish();
 }
 
-fn bench_decode_1mb(c: &mut Criterion) {
-    bench_decode_size(c, 1, "decode_1mb");
-}
-
-fn bench_decode_10mb(c: &mut Criterion) {
-    bench_decode_size(c, 10, "decode_10mb");
-}
-
-fn bench_decode_50mb(c: &mut Criterion) {
-    bench_decode_size(c, 50, "decode_50mb");
-}
-
-fn bench_multistream(c: &mut Criterion) {
+fn bench_scanner_multistream(c: &mut Criterion) {
     // Generate a multi-stream file using pbzip2 if available
-    let filename = "../bench_multistream.bin";
+    let filename = "../bench_scan_multistream.bin";
     let bz2_filename = format!("{}.bz2", filename);
 
     if !Path::new(&bz2_filename).exists() {
-        println!("Generating multi-stream test file...");
+        println!("Generating multi-stream test file for scanner...");
 
         // Create 10MB random data
         let status = Command::new("dd")
@@ -130,23 +113,23 @@ fn bench_multistream(c: &mut Criterion) {
     }
 
     if !Path::new(&bz2_filename).exists() {
-        println!("Skipping multistream benchmark (file generation failed)");
+        println!("Skipping multistream scanner benchmark (file generation failed)");
         return;
     }
 
-    let file = File::open(&bz2_filename).expect("Failed to open bench file");
-    let mmap = unsafe { MmapOptions::new().map(&file).expect("Failed to mmap") };
-    let mmap_arc = Arc::new(mmap);
+    let data = std::fs::read(&bz2_filename).expect("Failed to read test file");
 
-    let mut group = c.benchmark_group("decode_multistream");
-    group.throughput(Throughput::Bytes(mmap_arc.len() as u64));
-    group.sample_size(10);
+    let mut group = c.benchmark_group("scanner_multistream");
+    group.throughput(Throughput::Bytes(data.len() as u64));
 
-    group.bench_function("parallel_bzip2", |b| {
+    group.bench_function("scan_multistream", |b| {
         b.iter(|| {
-            let mut decoder = Bz2Decoder::new(mmap_arc.clone());
-            let mut buffer = [0u8; 8192];
-            while decoder.read(&mut buffer).unwrap() > 0 {}
+            let receiver = scan_blocks(&data);
+            let mut count = 0;
+            while receiver.recv().is_ok() {
+                count += 1;
+            }
+            count
         })
     });
 
@@ -156,6 +139,6 @@ fn bench_multistream(c: &mut Criterion) {
 criterion_group! {
     name = benches;
     config = Criterion::default().with_profiler(PProfProfiler::new(100, Output::Flamegraph(None)));
-    targets = bench_decode_1mb, bench_decode_10mb, bench_decode_50mb, bench_multistream
+    targets = bench_scanner, bench_scanner_multistream
 }
 criterion_main!(benches);

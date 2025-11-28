@@ -7,9 +7,11 @@
 *.svg
 *.txt
 *.sh
+!scripts/*.sh
 
 # Benchmark and test specific files
 bench_scaling.*
 test_e2e_*.*
 benchmark_scaling.*
 output.*
+profiling/

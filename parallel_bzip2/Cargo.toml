@@ -13,8 +13,17 @@ anyhow = "1.0"
 memmap2 = "0.7"
 
 [dev-dependencies]
-criterion = "0.5"
+criterion = { version = "0.5", features = ["html_reports"] }
+pprof = { version = "0.13", features = ["flamegraph", "criterion"] }
 
 [[bench]]
 name = "decode_benchmark"
+harness = false
+
+[[bench]]
+name = "scanner_benchmark"
+harness = false
+
+[[bench]]
+name = "e2e_benchmark"
 harness = false

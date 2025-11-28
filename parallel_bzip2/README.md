@@ -61,6 +61,41 @@ fn main() -> anyhow::Result<()> {
 
 `parallel_bzip2` scales linearly with the number of available CPU cores. It is significantly faster than standard single-threaded decoders for large files.
 
+## Benchmarking and Profiling
+
+This crate includes comprehensive benchmarks and profiling tools:
+
+- **Decode benchmarks**: Test decompression with various file sizes (1MB, 10MB, 50MB)
+- **Scanner benchmarks**: Measure block scanning performance
+- **End-to-end benchmarks**: Test the full decompression pipeline
+- **CPU profiling**: Generate flamegraphs to identify performance bottlenecks
+- **Memory profiling**: Track memory usage and detect leaks
+
+### Running Benchmarks
+
+```bash
+# Run all benchmarks
+cargo bench
+
+# Run specific benchmark suite
+cargo bench --bench decode_benchmark
+cargo bench --bench scanner_benchmark
+cargo bench --bench e2e_benchmark
+```
+
+### Profiling
+
+```bash
+# CPU profiling with flamegraphs
+cd ../scripts
+./profile_cpu.sh
+
+# Memory profiling with valgrind
+./profile_memory.sh
+```
+
+For detailed instructions, see [BENCHMARKING.md](../BENCHMARKING.md).
+
 ## License
 
 MIT

@@ -7,15 +7,10 @@ It also supports direct conversion to Zstandard (`zstd`), allowing for efficient
 ## Features
 
 -   **Parallel Decompression**: Automatically detects and decompresses multiple bzip2 streams in parallel using `rayon`.
--   **Single & Multi-Stream Support**: Efficiently handles both standard single-stream and multi-stream (e.g., `pbzip2`) bzip2 files.
 -   **Zstd Conversion**: Decompress bzip2 and compress to zstd in a single pass without intermediate files.
 -   **High Performance**: Scales linearly with CPU cores.
--   **Thread Control**: Configure the number of worker threads with the `-j` flag.
 -   **Low Memory Footprint**: Uses memory mapping and streaming output to handle large files efficiently.
--   **Progress Indication**: Real-time progress bar during conversion.
 -   **Robust Detection**: Uses a strong 10-byte signature check to correctly identify bzip2 streams.
--   **Benchmark Mode**: Scanner-only benchmark mode for performance testing.
--   **Fuzz Testing**: Comprehensive fuzz testing infrastructure for reliability.
 
 ## Library
 
