@@ -1,5 +1,5 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use parallel_bzip2::scan_blocks;
+use parallel_bzip2_decoder::scan_blocks;
 use pprof::criterion::{Output, PProfProfiler};
 use std::fs;
 use std::path::Path;
@@ -19,7 +19,7 @@ fn generate_test_file(size_mb: usize) -> String {
 
     // Create random data
     let status = Command::new("dd")
-        .args(&[
+        .args([
             "if=/dev/urandom",
             &format!("of={}", filename),
             "bs=1M",
@@ -34,7 +34,7 @@ fn generate_test_file(size_mb: usize) -> String {
 
     // Compress with bzip2
     let status = Command::new("bzip2")
-        .args(&["-k", "-f", "-9", &filename])
+        .args(["-k", "-f", "-9", &filename])
         .status();
 
     if status.is_err() || !status.unwrap().success() {
@@ -84,7 +84,7 @@ fn bench_scanner_multistream(c: &mut Criterion) {
 
         // Create 10MB random data
         let status = Command::new("dd")
-            .args(&[
+            .args([
                 "if=/dev/urandom",
                 &format!("of={}", filename),
                 "bs=1M",
@@ -96,14 +96,14 @@ fn bench_scanner_multistream(c: &mut Criterion) {
         if status.is_ok() && status.unwrap().success() {
             // Try pbzip2 for multi-stream
             let pbzip2_status = Command::new("pbzip2")
-                .args(&["-k", "-f", "-p4", filename])
+                .args(["-k", "-f", "-p4", filename])
                 .status();
 
             if pbzip2_status.is_err() || !pbzip2_status.unwrap().success() {
                 // Fallback to regular bzip2
                 println!("pbzip2 not available, using bzip2 (single stream)");
                 Command::new("bzip2")
-                    .args(&["-k", "-f", filename])
+                    .args(["-k", "-f", filename])
                     .status()
                     .expect("Failed to compress");
             }

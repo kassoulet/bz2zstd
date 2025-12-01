@@ -1,5 +1,5 @@
 use anyhow::Result;
-use parallel_bzip2::Bz2Decoder;
+use parallel_bzip2_decoder::Bz2Decoder;
 use std::env;
 use std::fs::File;
 use std::io::{Read, Write};

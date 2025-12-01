@@ -2,6 +2,14 @@
 name = "bz2zstd"
 version = "0.1.0"
 edition = "2021"
+authors = ["Gautier Portet <gautier@soundconverter.org>"]
+description = "High-performance bzip2 to zstd converter"
+homepage = "https://github.com/parallel-bz2/parallel-bz2"
+repository = "https://github.com/parallel-bz2/parallel-bz2"
+license = "MIT"
+keywords = ["bzip2", "zstd", "compression", "converter"]
+categories = ["compression", "command-line-utilities"]
+readme = "../README.md"
 
 [dependencies]
 bzip2 = { version = "0.4", features = ["static"] }
@@ -12,4 +20,4 @@ anyhow = "1.0"
 crossbeam-channel = "0.5"
 zstd = { version = "0.13", features = ["zstdmt"] }
 indicatif = "0.17"
-parallel_bzip2 = { path = "../parallel_bzip2" }
+parallel_bzip2_decoder = { path = "../parallel_bzip2_decoder" }

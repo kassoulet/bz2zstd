@@ -238,7 +238,7 @@ impl Default for Scanner {
 /// # Examples
 ///
 /// ```
-/// # use parallel_bzip2::extract_bits;
+/// # use parallel_bzip2_decoder::extract_bits;
 /// let data = vec![0xAA, 0xBB]; // 10101010 10111011
 /// let mut out = Vec::new();
 /// extract_bits(&data, 4, 12, &mut out);

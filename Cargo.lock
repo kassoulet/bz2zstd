@@ -162,7 +162,7 @@ dependencies = [
  "crossbeam-channel",
  "indicatif",
  "memmap2 0.7.1",
- "parallel_bzip2",
+ "parallel_bzip2_decoder",
  "rayon",
  "zstd",
 ]
@@ -713,7 +713,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6790f58c7ff633d8771f42965289203411a5e5c68388703c06e14f24770b41e"
 
 [[package]]
-name = "parallel_bzip2"
+name = "parallel_bzip2_decoder"
 version = "0.1.0"
 dependencies = [
  "aho-corasick",

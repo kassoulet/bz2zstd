@@ -10,6 +10,8 @@
 //! - **Streaming API**: Implements `std::io::Read` for easy integration
 //! - **Memory-efficient**: Uses bounded channels to limit memory usage
 //! - **Zero-copy where possible**: Memory-mapped I/O for file access
+//! - **Full bzip2 format support**: Handles both single-stream and multi-stream bzip2 files
+//! - **Error handling**: Comprehensive error reporting with `anyhow` integration
 //!
 //! # Architecture
 //!
@@ -24,7 +26,7 @@
 //! The easiest way to use this library is through the `Bz2Decoder`:
 //!
 //! ```no_run
-//! use parallel_bzip2::Bz2Decoder;
+//! use parallel_bzip2_decoder::Bz2Decoder;
 //! use std::io::Read;
 //!
 //! let mut decoder = Bz2Decoder::open("file.bz2").unwrap();
@@ -37,7 +39,7 @@
 //! For more control, you can use the lower-level functions:
 //!
 //! ```no_run
-//! use parallel_bzip2::{scan_blocks, decompress_block};
+//! use parallel_bzip2_decoder::{scan_blocks, decompress_block};
 //!
 //! let compressed_data = std::fs::read("file.bz2").unwrap();
 //! let block_receiver = scan_blocks(&compressed_data);
@@ -57,6 +59,26 @@
 //!
 //! All public types are thread-safe. The library uses Rayon's global thread pool by default,
 //! but creates dedicated pools where needed to avoid deadlocks.
+//!
+//! # Error Handling
+//!
+//! This crate uses `anyhow` for comprehensive error handling. Most functions return
+//! `Result<T, anyhow::Error>` for easy error propagation using the `?` operator.
+//!
+//! # Memory Usage
+//!
+//! The library is designed with memory efficiency in mind:
+//! - Memory-mapped I/O for large files
+//! - Bounded channels to prevent unbounded memory growth
+//! - Buffer reuse in block processing
+//!
+//! # Benchmarks
+//!
+//! Run benchmarks with `cargo bench` to measure performance on your system.
+//! Various benchmark suites test different aspects of performance:
+//! - Decode benchmarks with various file sizes
+//! - Scanner performance
+//! - End-to-end pipeline performance
 
 pub mod decoder;
 pub mod scanner;
@@ -99,7 +121,7 @@ use std::io::Read;
 /// # Examples
 ///
 /// ```no_run
-/// use parallel_bzip2::scan_blocks;
+/// use parallel_bzip2_decoder::scan_blocks;
 ///
 /// let data = std::fs::read("file.bz2").unwrap();
 /// let blocks = scan_blocks(&data);
@@ -199,7 +221,7 @@ pub fn scan_blocks(data: &[u8]) -> crossbeam_channel::Receiver<(u64, u64)> {
 /// # Examples
 ///
 /// ```no_run
-/// use parallel_bzip2::{scan_blocks, decompress_block};
+/// use parallel_bzip2_decoder::{scan_blocks, decompress_block};
 ///
 /// let data = std::fs::read("file.bz2").unwrap();
 /// let blocks = scan_blocks(&data);
@@ -242,7 +264,7 @@ pub fn decompress_block(data: &[u8], start_bit: u64, end_bit: u64) -> Result<Vec
 /// # Examples
 ///
 /// ```no_run
-/// use parallel_bzip2::{scan_blocks, decompress_block_into};
+/// use parallel_bzip2_decoder::{scan_blocks, decompress_block_into};
 ///
 /// let data = std::fs::read("file.bz2").unwrap();
 /// let blocks = scan_blocks(&data);
@@ -305,7 +327,7 @@ pub fn decompress_block_into(
 /// # Examples
 ///
 /// ```no_run
-/// use parallel_bzip2::parallel_bzip2_cat;
+/// use parallel_bzip2_decoder::parallel_bzip2_cat;
 ///
 /// let data = parallel_bzip2_cat("file.bz2").unwrap();
 /// println!("Decompressed {} bytes", data.len());

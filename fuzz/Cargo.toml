@@ -3,6 +3,9 @@ name = "parallel-bzip2-fuzz"
 version = "0.0.0"
 publish = false
 edition = "2021"
+authors = ["Gautier Portet <gautier@soundconverter.org>"]
+description = "Fuzz testing for parallel_bzip2_decoder"
+license = "MIT"
 
 [package.metadata]
 cargo-fuzz = true
@@ -11,8 +14,8 @@ cargo-fuzz = true
 libfuzzer-sys = "0.4"
 arbitrary = { version = "1", features = ["derive"] }
 
-[dependencies.parallel_bzip2]
-path = "../parallel_bzip2"
+[dependencies.parallel_bzip2_decoder]
+path = "../parallel_bzip2_decoder"
 
 [[bin]]
 name = "fuzz_scanner"

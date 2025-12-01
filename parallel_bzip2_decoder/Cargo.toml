@@ -1,7 +1,15 @@
 [package]
-name = "parallel_bzip2"
+name = "parallel_bzip2_decoder"
 version = "0.1.0"
 edition = "2021"
+authors = ["Gautier Portet <gautier@soundconverter.org>"]
+description = "High-performance parallel bzip2 decompression library"
+homepage = "https://github.com/parallel-bz2/parallel-bz2"
+repository = "https://github.com/parallel-bz2/parallel-bz2"
+license = "MIT"
+keywords = ["bzip2", "decompression", "parallel", "performance"]
+categories = ["compression", "concurrency"]
+readme = "README.md"
 
 [dependencies]
 aho-corasick = "1.1.4"

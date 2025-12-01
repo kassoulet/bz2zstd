@@ -1,4 +1,4 @@
-use parallel_bzip2::Bz2Decoder;
+use parallel_bzip2_decoder::Bz2Decoder;
 use std::io::Read;
 
 fn main() {

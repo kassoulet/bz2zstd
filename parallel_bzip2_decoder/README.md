@@ -1,4 +1,4 @@
-# parallel_bzip2
+# parallel_bzip2_decoder
 
 A high-performance, parallel bzip2 decoder for Rust.
 
@@ -10,6 +10,9 @@ This crate provides a `Bz2Decoder` that implements `std::io::Read`, allowing you
 - **Standard API**: Implements `std::io::Read` for easy integration.
 - **Memory Mapped**: Efficiently handles large files using memory mapping.
 - **Flexible**: Supports opening files directly or working with in-memory buffers (via `Arc`).
+- **Full bzip2 format support**: Handles both single-stream and multi-stream bzip2 files
+- **Error handling**: Comprehensive error reporting with `anyhow` integration
+- **Memory efficient**: Bounded channels and buffer reuse to minimize memory usage
 
 ## Usage
 
@@ -17,15 +20,15 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-parallel_bzip2 = "0.1"
+parallel_bzip2_decoder = "0.1"
 ```
 
 ### Decompressing a File
 
-The easiest way to use `parallel_bzip2` is to use `Bz2Decoder::open`, which handles memory mapping internally:
+The easiest way to use `parallel_bzip2_decoder` is to use `Bz2Decoder::open`, which handles memory mapping internally:
 
 ```rust
-use parallel_bzip2::Bz2Decoder;
+use parallel_bzip2_decoder::Bz2Decoder;
 use std::io::Read;
 
 fn main() -> anyhow::Result<()> {
@@ -42,7 +45,7 @@ fn main() -> anyhow::Result<()> {
 If you already have the data in memory (e.g., an `Arc<[u8]>` or `Arc<Mmap>`), you can use `Bz2Decoder::new`:
 
 ```rust
-use parallel_bzip2::Bz2Decoder;
+use parallel_bzip2_decoder::Bz2Decoder;
 use std::io::Read;
 use std::sync::Arc;
 
@@ -59,7 +62,7 @@ fn main() -> anyhow::Result<()> {
 
 ## Performance
 
-`parallel_bzip2` scales linearly with the number of available CPU cores. It is significantly faster than standard single-threaded decoders for large files.
+`parallel_bzip2_decoder` scales linearly with the number of available CPU cores. It is significantly faster than standard single-threaded decoders for large files.
 
 ## Benchmarking and Profiling
 
@@ -96,6 +99,18 @@ cd ../scripts
 
 For detailed instructions, see [BENCHMARKING.md](../BENCHMARKING.md).
 
+## API Stability
+
+This crate follows semantic versioning. Breaking changes will only occur with major version updates.
+
 ## License
 
 MIT
+
+## Contributing
+
+See the main repository's [CONTRIBUTING.md](../CONTRIBUTING.md) for details on how to contribute.
+
+## Changelog
+
+See [CHANGELOG.md](../CHANGELOG.md) for a history of changes (when available).

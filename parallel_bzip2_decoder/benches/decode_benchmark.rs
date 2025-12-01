@@ -1,6 +1,6 @@
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 use memmap2::MmapOptions;
-use parallel_bzip2::Bz2Decoder;
+use parallel_bzip2_decoder::Bz2Decoder;
 use pprof::criterion::{Output, PProfProfiler};
 use std::fs::{self, File};
 use std::io::Read;
@@ -22,7 +22,7 @@ fn generate_test_file(size_mb: usize) -> String {
 
     // Create random data
     let status = Command::new("dd")
-        .args(&[
+        .args([
             "if=/dev/urandom",
             &format!("of={}", filename),
             "bs=1M",
@@ -37,7 +37,7 @@ fn generate_test_file(size_mb: usize) -> String {
 
     // Compress with bzip2
     let status = Command::new("bzip2")
-        .args(&["-k", "-f", "-9", &filename])
+        .args(["-k", "-f", "-9", &filename])
         .status();
 
     if status.is_err() || !status.unwrap().success() {
@@ -60,7 +60,7 @@ fn bench_decode_size(c: &mut Criterion, size_mb: usize, name: &str) {
     group.throughput(Throughput::Bytes(mmap_arc.len() as u64));
     group.sample_size(10); // Reduce sample size for larger files
 
-    group.bench_function("parallel_bzip2", |b| {
+    group.bench_function("parallel_bzip2_decoder", |b| {
         b.iter(|| {
             let mut decoder = Bz2Decoder::new(mmap_arc.clone());
             let mut buffer = [0u8; 8192];
@@ -101,7 +101,7 @@ fn bench_multistream(c: &mut Criterion) {
 
         // Create 10MB random data
         let status = Command::new("dd")
-            .args(&[
+            .args([
                 "if=/dev/urandom",
                 &format!("of={}", filename),
                 "bs=1M",
@@ -113,14 +113,14 @@ fn bench_multistream(c: &mut Criterion) {
         if status.is_ok() && status.unwrap().success() {
             // Try pbzip2 for multi-stream
             let pbzip2_status = Command::new("pbzip2")
-                .args(&["-k", "-f", "-p4", filename])
+                .args(["-k", "-f", "-p4", filename])
                 .status();
 
             if pbzip2_status.is_err() || !pbzip2_status.unwrap().success() {
                 // Fallback to regular bzip2
                 println!("pbzip2 not available, using bzip2 (single stream)");
                 Command::new("bzip2")
-                    .args(&["-k", "-f", filename])
+                    .args(["-k", "-f", filename])
                     .status()
                     .expect("Failed to compress");
             }
@@ -142,7 +142,7 @@ fn bench_multistream(c: &mut Criterion) {
     group.throughput(Throughput::Bytes(mmap_arc.len() as u64));
     group.sample_size(10);
 
-    group.bench_function("parallel_bzip2", |b| {
+    group.bench_function("parallel_bzip2_decoder", |b| {
         b.iter(|| {
             let mut decoder = Bz2Decoder::new(mmap_arc.clone());
             let mut buffer = [0u8; 8192];

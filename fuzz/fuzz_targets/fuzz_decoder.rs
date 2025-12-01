@@ -1,7 +1,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use parallel_bzip2::Bz2Decoder;
+use parallel_bzip2_decoder::Bz2Decoder;
 use std::io::Read;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -15,23 +15,23 @@ fuzz_target!(|data: &[u8]| {
     // Create decoder from the fuzzed data
     let data_arc = Arc::new(data.to_vec());
     let mut decoder = Bz2Decoder::new(data_arc);
-    
+
     // Set a timeout to prevent hanging
     let start = Instant::now();
     let timeout = Duration::from_secs(1);
-    
+
     // Try to read decompressed output with strict limits
     let mut output = Vec::new();
-    
+
     // Much lower limit to prevent OOM - 10 MB instead of 100 MB
     const MAX_OUTPUT: usize = 10_000_000;
-    
+
     loop {
         // Check timeout
         if start.elapsed() > timeout {
             break;
         }
-        
+
         // Use smaller buffer to limit memory growth
         let mut buf = [0u8; 4096];
         match decoder.read(&mut buf) {

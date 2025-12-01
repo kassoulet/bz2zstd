@@ -45,7 +45,7 @@ use std::path::PathBuf;
 use std::thread;
 
 mod writer;
-use parallel_bzip2::{extract_bits, MarkerType, Scanner};
+use parallel_bzip2_decoder::{extract_bits, MarkerType, Scanner};
 use writer::OutputWriter;
 
 /// Command-line arguments for bz2zstd.

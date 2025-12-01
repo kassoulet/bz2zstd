@@ -1,7 +1,7 @@
 [workspace]
 members = [
     "bz2zstd",
-    "parallel_bzip2",
+    "parallel_bzip2_decoder",
 ]
 exclude = ["fuzz"]
 resolver = "2"

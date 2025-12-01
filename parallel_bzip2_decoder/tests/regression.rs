@@ -82,7 +82,7 @@ fn test_regression_lbzip2_samples() {
             }
 
             // 2. Run parallel_bzip2_cat
-            let decoded_result = parallel_bzip2::parallel_bzip2_cat(&path);
+            let decoded_result = parallel_bzip2_decoder::parallel_bzip2_cat(&path);
 
             if let Err(e) = decoded_result {
                 println!("FAILURE: parallel_bzip2_cat failed on {:?}: {}", path, e);

@@ -1,6 +1,6 @@
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 use memmap2::MmapOptions;
-use parallel_bzip2::Bz2Decoder;
+use parallel_bzip2_decoder::Bz2Decoder;
 use pprof::criterion::{Output, PProfProfiler};
 use std::fs::{self, File};
 use std::io::Read;
@@ -66,7 +66,7 @@ fn bench_e2e_memory_usage(c: &mut Criterion) {
         println!("Generating test file for memory benchmark...");
 
         let status = std::process::Command::new("dd")
-            .args(&[
+            .args([
                 "if=/dev/urandom",
                 &format!("of={}", filename),
                 "bs=1M",
@@ -77,7 +77,7 @@ fn bench_e2e_memory_usage(c: &mut Criterion) {
 
         if status.is_ok() && status.unwrap().success() {
             std::process::Command::new("bzip2")
-                .args(&["-k", "-f", "-9", filename])
+                .args(["-k", "-f", "-9", filename])
                 .status()
                 .expect("Failed to compress");
 
@@ -128,7 +128,7 @@ fn bench_e2e_full_pipeline(c: &mut Criterion) {
         println!("Generating test file for pipeline benchmark...");
 
         let status = std::process::Command::new("dd")
-            .args(&[
+            .args([
                 "if=/dev/urandom",
                 &format!("of={}", filename),
                 "bs=1M",
@@ -139,7 +139,7 @@ fn bench_e2e_full_pipeline(c: &mut Criterion) {
 
         if status.is_ok() && status.unwrap().success() {
             std::process::Command::new("bzip2")
-                .args(&["-k", "-f", "-9", filename])
+                .args(["-k", "-f", "-9", filename])
                 .status()
                 .expect("Failed to compress");
 
@@ -154,7 +154,7 @@ fn bench_e2e_full_pipeline(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("e2e_pipeline");
 
-    group.bench_function("parallel_bzip2_full", |b| {
+    group.bench_function("parallel_bzip2_decoder_full", |b| {
         b.iter(|| {
             let mut decoder = Bz2Decoder::open(&bz2_filename).unwrap();
             let mut output = Vec::new();
