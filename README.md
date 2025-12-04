@@ -65,7 +65,7 @@ The binary will be available at `target/release/bz2zstd`.
 
 -   `<INPUT>`: Input bzip2 file.
 -   `-o, --output <FILE>`: Output file (optional, defaults to input file with .bz2 replaced by .zst).
--   `-z, --zstd-level <LEVEL>`: Set zstd compression level (default: 3, e.g., `-z 9`).
+-   `-z, --zstd-level <LEVEL>`: Set zstd compression level (default: 9, e.g., `-z 9`).
 -   `-j, --jobs <N>`: Number of threads to use (default: number of logical cores).
 -   `--benchmark-scan`: Benchmark mode: Only run the scanner and exit.
 

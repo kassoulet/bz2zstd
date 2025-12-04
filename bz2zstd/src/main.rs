@@ -59,9 +59,9 @@ struct Args {
     #[arg(short, long)]
     output: Option<PathBuf>,
 
-    /// Zstd compression level (1-22, default = 3)
+    /// Zstd compression level (1-22, default = 9)
     /// Higher values provide better compression but are slower
-    #[arg(short = 'z', long, default_value_t = 3)]
+    #[arg(short = 'z', long, default_value_t = 9)]
     zstd_level: i32,
 
     /// Number of threads to use (default = number of logical cores)
