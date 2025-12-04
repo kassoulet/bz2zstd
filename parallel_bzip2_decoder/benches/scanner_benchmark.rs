@@ -1,5 +1,6 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use parallel_bzip2_decoder::scan_blocks;
+#[cfg(unix)]
 use pprof::criterion::{Output, PProfProfiler};
 use std::fs;
 use std::path::Path;
@@ -136,9 +137,17 @@ fn bench_scanner_multistream(c: &mut Criterion) {
     group.finish();
 }
 
+#[cfg(unix)]
 criterion_group! {
     name = benches;
     config = Criterion::default().with_profiler(PProfProfiler::new(100, Output::Flamegraph(None)));
+    targets = bench_scanner, bench_scanner_multistream
+}
+
+#[cfg(not(unix))]
+criterion_group! {
+    name = benches;
+    config = Criterion::default();
     targets = bench_scanner, bench_scanner_multistream
 }
 criterion_main!(benches);

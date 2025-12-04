@@ -1,6 +1,7 @@
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 use memmap2::MmapOptions;
 use parallel_bzip2_decoder::Bz2Decoder;
+#[cfg(unix)]
 use pprof::criterion::{Output, PProfProfiler};
 use std::fs::{self, File};
 use std::io::Read;
@@ -176,9 +177,17 @@ fn bench_e2e_full_pipeline(c: &mut Criterion) {
     group.finish();
 }
 
+#[cfg(unix)]
 criterion_group! {
     name = benches;
     config = Criterion::default().with_profiler(PProfProfiler::new(100, Output::Flamegraph(None)));
+    targets = bench_e2e_fixtures, bench_e2e_memory_usage, bench_e2e_full_pipeline
+}
+
+#[cfg(not(unix))]
+criterion_group! {
+    name = benches;
+    config = Criterion::default();
     targets = bench_e2e_fixtures, bench_e2e_memory_usage, bench_e2e_full_pipeline
 }
 criterion_main!(benches);
