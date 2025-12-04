@@ -1,3 +1,5 @@
+[![CI](https://github.com/kassoulet/bz2zstd/actions/workflows/ci.yml/badge.svg)](https://github.com/kassoulet/bz2zstd/actions/workflows/ci.yml)
+
 # bz2zstd
 
 A high-performance, parallel bzip2 decompressor and bzip2-to-zstd converter written in Rust. It utilizes multiple CPU cores to decompress **both single-stream** (standard) and **multi-stream** (e.g., `pbzip2`) bzip2 files by detecting bzip2 blocks and processing them in parallel.
