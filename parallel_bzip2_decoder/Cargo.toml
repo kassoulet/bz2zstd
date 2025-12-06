@@ -10,6 +10,15 @@ license = "MIT"
 keywords = ["bzip2", "decompression", "parallel", "performance"]
 categories = ["compression", "concurrency"]
 readme = "README.md"
+include = [
+    "src/**/*",
+    "benches/**/*",
+    "examples/**/*",
+    "tests/**/*",
+    "Cargo.toml",
+    "README.md",
+    "LICENSE",
+]
 
 [dependencies]
 aho-corasick = "1.1.4"
