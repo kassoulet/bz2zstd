@@ -249,6 +249,7 @@ fn main() -> Result<()> {
 
             // Handle edge case: block without EOS marker (truncated file)
             if let Some(start) = current_block_start {
+                eprintln!("Warning: Input stream appears to be truncated - found block without EOS marker");
                 let end = (mmap_ref.len() as u64) * 8;
                 let _ = task_sender.send((start, end));
             }
