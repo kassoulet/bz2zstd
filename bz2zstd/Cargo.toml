@@ -1,7 +1,8 @@
 [package]
 name = "bz2zstd"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
+rust-version = "1.70"
 authors = ["Gautier Portet <gautier@soundconverter.org>"]
 description = "High-performance bzip2 to zstd converter"
 homepage = "https://github.com/parallel-bz2/parallel-bz2"
@@ -20,4 +21,4 @@ anyhow = "1.0"
 crossbeam-channel = "0.5"
 zstd = { version = "0.13", features = ["zstdmt"] }
 indicatif = "0.17"
-parallel_bzip2_decoder = { path = "../parallel_bzip2_decoder", version = "0.1.0" }
+parallel_bzip2_decoder = { path = "../parallel_bzip2_decoder", version = "0.2.0" }

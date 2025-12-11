@@ -81,11 +81,13 @@
 //! - End-to-end pipeline performance
 
 pub mod decoder;
+pub mod error;
 pub mod scanner;
+
 pub use decoder::Bz2Decoder;
+pub use error::{Bz2Error, Result};
 pub use scanner::{extract_bits, MarkerType, Scanner};
 
-use anyhow::{Context, Result};
 use bzip2::read::BzDecoder;
 use crossbeam_channel::bounded;
 use std::collections::HashMap;
@@ -298,16 +300,19 @@ pub fn decompress_block_into(
         Ok(_) => Ok(()),
         // UnexpectedEof is expected for the last block without EOS marker
         Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => Ok(()),
-        Err(e) => Err(e).context("Failed to decompress block"),
+        Err(e) => Err(Bz2Error::DecompressionFailed {
+            offset: start_bit,
+            source: e,
+        }),
     }
 }
 
-/// Decompresses an entire bzip2 file and returns the decompressed data.
+/// Decompresses an entire bzip2 file into memory.
 ///
 /// This is a convenience function that combines scanning and decompression.
 /// It's primarily used for testing but can be useful for simple use cases.
 ///
-/// For more control or streaming decompression, use `Bz2Decoder` instead.
+/// For more control or streaming decompression, use [`Bz2Decoder`] instead.
 ///
 /// # Arguments
 ///
@@ -327,14 +332,37 @@ pub fn decompress_block_into(
 /// # Examples
 ///
 /// ```no_run
-/// use parallel_bzip2_decoder::parallel_bzip2_cat;
+/// use parallel_bzip2_decoder::decompress_file;
 ///
-/// let data = parallel_bzip2_cat("file.bz2").unwrap();
+/// let data = decompress_file("file.bz2").unwrap();
 /// println!("Decompressed {} bytes", data.len());
 /// ```
-pub fn parallel_bzip2_cat<P: AsRef<std::path::Path>>(path: P) -> Result<Vec<u8>> {
+pub fn decompress_file<P: AsRef<std::path::Path>>(path: P) -> Result<Vec<u8>> {
     let mut decoder = Bz2Decoder::open(path)?;
     let mut data = Vec::new();
     decoder.read_to_end(&mut data)?;
     Ok(data)
+}
+
+/// Decompresses an entire bzip2 file and returns the decompressed data.
+///
+/// # Deprecated
+///
+/// This function has been renamed to [`decompress_file`] for clarity.
+/// The name "cat" is Unix jargon that may not be immediately clear to all users.
+///
+/// # Examples
+///
+/// ```no_run
+/// use parallel_bzip2_decoder::decompress_file;
+///
+/// let data = decompress_file("file.bz2").unwrap();
+/// println!("Decompressed {} bytes", data.len());
+/// ```
+#[deprecated(
+    since = "0.2.0",
+    note = "Use `decompress_file` instead for clearer naming"
+)]
+pub fn parallel_bzip2_cat<P: AsRef<std::path::Path>>(path: P) -> Result<Vec<u8>> {
+    decompress_file(path)
 }

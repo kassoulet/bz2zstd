@@ -1,11 +1,13 @@
 [package]
 name = "parallel_bzip2_decoder"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
+rust-version = "1.70"
 authors = ["Gautier Portet <gautier@soundconverter.org>"]
 description = "High-performance parallel bzip2 decompression library"
 homepage = "https://github.com/parallel-bz2/parallel-bz2"
 repository = "https://github.com/parallel-bz2/parallel-bz2"
+documentation = "https://docs.rs/parallel_bzip2_decoder"
 license = "MIT"
 keywords = ["bzip2", "decompression", "parallel", "performance"]
 categories = ["compression", "concurrency"]
@@ -46,7 +48,3 @@ harness = false
 [[bench]]
 name = "e2e_benchmark"
 harness = false
-
-[[bin]]
-name = "simple_decode"
-path = "examples/simple_decode.rs"

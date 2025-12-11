@@ -25,7 +25,7 @@
 use aho_corasick::AhoCorasick;
 
 /// Marker type found in bzip2 streams.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MarkerType {
     /// Block start marker (π = 0x314159265359)
     Block,
@@ -144,7 +144,7 @@ impl Scanner {
         // Overlap ensures we don't miss markers that span chunk boundaries
         let overlap = 8;
         let len = data.len();
-        let num_chunks = len.div_ceil(chunk_size);
+        let num_chunks = (len + chunk_size - 1) / chunk_size;
 
         // Create a dedicated thread pool to prevent deadlock:
         // If we used the global pool and the caller is also using it (e.g., via par_bridge),
@@ -251,7 +251,7 @@ pub fn extract_bits(data: &[u8], start_bit: u64, end_bit: u64, out: &mut Vec<u8>
     }
 
     let bit_len = end_bit - start_bit;
-    let byte_len = bit_len.div_ceil(8) as usize;
+    let byte_len = ((bit_len + 7) / 8) as usize;
     // Pre-allocate to avoid reallocations during extraction
     out.reserve(byte_len);
 

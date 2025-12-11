@@ -81,12 +81,12 @@ fn test_regression_lbzip2_samples() {
                 continue;
             }
 
-            // 2. Run parallel_bzip2_cat
-            let decoded_result = parallel_bzip2_decoder::parallel_bzip2_cat(&path);
+            // 2. Run decompress_file
+            let decoded_result = parallel_bzip2_decoder::decompress_file(&path);
 
             if let Err(e) = decoded_result {
-                println!("FAILURE: parallel_bzip2_cat failed on {:?}: {}", path, e);
-                failures.push(format!("parallel_bzip2_cat failed on {:?}", file_name));
+                println!("FAILURE: decompress_file failed on {:?}: {}", path, e);
+                failures.push(format!("decompress_file failed on {:?}", file_name));
                 let _ = fs::remove_file(&expected_output_path);
                 continue;
             }

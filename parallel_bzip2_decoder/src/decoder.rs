@@ -34,7 +34,7 @@ use std::collections::HashMap;
 use std::io::{self, Read};
 use std::sync::Arc;
 
-use crate::{decompress_block_into, scan_blocks};
+use crate::{decompress_block_into, scan_blocks, Bz2Error, Result};
 
 /// Parallel bzip2 decoder implementing the `Read` trait.
 ///
@@ -92,9 +92,15 @@ impl Bz2Decoder {
     /// - The file is opened read-only
     /// - The mmap is kept alive via Arc for the decoder's lifetime
     /// - No concurrent modifications to the file are expected
-    pub fn open<P: AsRef<std::path::Path>>(path: P) -> anyhow::Result<Self> {
+    pub fn open<P: AsRef<std::path::Path>>(path: P) -> Result<Self> {
         let file = std::fs::File::open(path)?;
-        let mmap = unsafe { memmap2::MmapOptions::new().map(&file)? };
+        // SAFETY: This is safe because:
+        // 1. The file is opened read-only
+        // 2. The mmap is kept alive via Arc for the decoder's lifetime
+        // 3. No concurrent modifications to the file are expected
+        // 4. The file handle ensures the file exists for the duration of the mmap
+        let mmap =
+            unsafe { memmap2::MmapOptions::new().map(&file) }.map_err(Bz2Error::MmapFailed)?;
         Ok(Self::new(Arc::new(mmap)))
     }
 
@@ -159,7 +165,7 @@ impl Bz2Decoder {
                 .par_bridge() // Convert to parallel iterator
                 .try_for_each_init(
                     Vec::new, // Thread-local scratch buffer (avoids allocations)
-                    |scratch, (idx, (start_bit, end_bit))| -> anyhow::Result<()> {
+                    |scratch, (idx, (start_bit, end_bit))| -> Result<()> {
                         let mut decomp_buf = Vec::new();
                         // Decompress this block
                         decompress_block_into(slice, start_bit, end_bit, &mut decomp_buf, scratch)?;
@@ -178,6 +184,17 @@ impl Bz2Decoder {
             next_block_idx: 0,
             pending_blocks: HashMap::new(),
         }
+    }
+}
+
+impl std::fmt::Debug for Bz2Decoder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Bz2Decoder")
+            .field("buffer_len", &self.buffer.len())
+            .field("buffer_pos", &self.buffer_pos)
+            .field("next_block_idx", &self.next_block_idx)
+            .field("pending_blocks_count", &self.pending_blocks.len())
+            .finish_non_exhaustive()
     }
 }
 
