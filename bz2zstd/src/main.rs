@@ -143,28 +143,38 @@ fn main() -> Result<()> {
     let (result_sender, result_receiver) =
         bounded::<(usize, Vec<u8>)>(rayon::current_num_threads() * 2);
 
+    // Determine output file path
+    let output_path = if let Some(path) = args.output {
+        path
+    } else {
+        // Auto-generate output filename by replacing .bz2 with .zst
+        let input_str = args.input.to_string_lossy();
+        if input_str.ends_with("bz2") {
+            PathBuf::from(input_str.replace("bz2", "zst"))
+        } else {
+            let mut path = args.input.clone();
+            path.set_extension("zst");
+            path
+        }
+    };
+
+    // Check if input and output refer to the same file to avoid Bus Error (mmap conflict)
+    if let Ok(abs_input) = std::fs::canonicalize(&args.input) {
+        if let Ok(abs_output) = std::fs::canonicalize(&output_path) {
+            if abs_input == abs_output {
+                anyhow::bail!("Input and output files cannot be the same (preventing Bus Error with mmap)");
+            }
+        }
+    }
+
     // === STAGE 3: WRITER THREAD ===
     //
     // Receives compressed blocks from workers and writes them in order.
     // Uses a HashMap to buffer out-of-order blocks.
+    let writer_path = output_path.clone();
     let writer_handle = thread::spawn(move || -> Result<()> {
-        // Determine output file path
-        let output_path = if let Some(path) = args.output {
-            path
-        } else {
-            // Auto-generate output filename by replacing .bz2 with .zst
-            let input_str = args.input.to_string_lossy();
-            if input_str.ends_with("bz2") {
-                PathBuf::from(input_str.replace("bz2", "zst"))
-            } else {
-                let mut path = args.input.clone();
-                path.set_extension("zst");
-                path
-            }
-        };
-
         let raw_out: Box<dyn Write + Send> =
-            Box::new(File::create(output_path).context("Failed to create output file")?);
+            Box::new(File::create(writer_path).context("Failed to create output file")?);
 
         let mut out = OutputWriter::new(raw_out)?;
         // Buffer for out-of-order blocks
@@ -281,8 +291,13 @@ fn main() -> Result<()> {
                     // Decompress the bzip2 block
                     // Note: Last block may not have EOS marker, causing UnexpectedEof
                     decomp_buf.clear();
-                    let mut decoder = BzDecoder::new(&wrapped_data[..]);
+                    // Limit decompression to 2MB to prevent decompression bombs.
+                    // Standard bzip2 blocks are max 900KB.
+                    let mut decoder = BzDecoder::new(&wrapped_data[..]).take(2_000_001);
                     match decoder.read_to_end(decomp_buf) {
+                        Ok(n) if n > 2_000_000 => {
+                            return Err(anyhow::anyhow!("Decompressed block exceeds 2MB limit (potential decompression bomb)"));
+                        }
                         Ok(_) => {}
                         // Expected for last block without EOS marker
                         Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {}

@@ -295,8 +295,13 @@ pub fn decompress_block_into(
     // Decompress using the bzip2 crate
     // Note: The last block may not have a proper EOS marker, causing UnexpectedEof
     out.clear();
-    let mut decoder = BzDecoder::new(&scratch[..]);
+    // Limit decompression to 2MB to prevent decompression bombs.
+    // Standard bzip2 blocks are max 900KB.
+    let mut decoder = BzDecoder::new(&scratch[..]).take(2_000_001);
     match decoder.read_to_end(out) {
+        Ok(n) if n > 2_000_000 => Err(Bz2Error::InvalidFormat(
+            "Decompressed block exceeds 2MB limit (potential decompression bomb)".to_string(),
+        )),
         Ok(_) => Ok(()),
         // UnexpectedEof is expected for the last block without EOS marker
         Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => Ok(()),
