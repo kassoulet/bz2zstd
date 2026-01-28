@@ -159,12 +159,31 @@ fn main() -> Result<()> {
     };
 
     // Check if input and output refer to the same file to avoid Bus Error (mmap conflict)
-    if let Ok(abs_input) = std::fs::canonicalize(&args.input) {
-        if let Ok(abs_output) = std::fs::canonicalize(&output_path) {
-            if abs_input == abs_output {
-                anyhow::bail!("Input and output files cannot be the same (preventing Bus Error with mmap)");
+    // This handles symlinks via canonicalize and hardlinks via device/inode check on Unix.
+    let is_same = (|| {
+        let abs_input = std::fs::canonicalize(&args.input).ok()?;
+        let abs_output = std::fs::canonicalize(&output_path).ok()?;
+        if abs_input == abs_output {
+            return Some(true);
+        }
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            let meta_in = std::fs::metadata(&abs_input).ok()?;
+            let meta_out = std::fs::metadata(&abs_output).ok()?;
+            if meta_in.dev() == meta_out.dev() && meta_in.ino() == meta_out.ino() {
+                return Some(true);
             }
         }
+        Some(false)
+    })()
+    .unwrap_or(false);
+
+    if is_same {
+        anyhow::bail!(
+            "Input and output files cannot be the same (preventing Bus Error with mmap)"
+        );
     }
 
     // === STAGE 3: WRITER THREAD ===
