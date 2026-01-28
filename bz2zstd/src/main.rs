@@ -86,6 +86,33 @@ fn main() -> Result<()> {
             .context("Failed to build global thread pool")?;
     }
 
+    // Determine output file path early to check against input
+    let output_path = if let Some(path) = args.output.clone() {
+        path
+    } else {
+        // Auto-generate output filename by replacing .bz2 with .zst
+        let input_str = args.input.to_string_lossy();
+        if input_str.ends_with("bz2") {
+            PathBuf::from(input_str.replace("bz2", "zst"))
+        } else {
+            let mut path = args.input.clone();
+            path.set_extension("zst");
+            path
+        }
+    };
+
+    // Security Requirement: Verify that input and output file paths are distinct
+    // to prevent SIGBUS caused by truncating a memory-mapped input file.
+    if let Ok(input_canonical) = std::fs::canonicalize(&args.input) {
+        if output_path.exists() {
+            if let Ok(output_canonical) = std::fs::canonicalize(&output_path) {
+                if input_canonical == output_canonical {
+                    anyhow::bail!("Input and output files must be different");
+                }
+            }
+        }
+    }
+
     // Memory-map the input file for efficient random access
     // Benefits:
     // - No need to load entire file into memory
@@ -148,21 +175,6 @@ fn main() -> Result<()> {
     // Receives compressed blocks from workers and writes them in order.
     // Uses a HashMap to buffer out-of-order blocks.
     let writer_handle = thread::spawn(move || -> Result<()> {
-        // Determine output file path
-        let output_path = if let Some(path) = args.output {
-            path
-        } else {
-            // Auto-generate output filename by replacing .bz2 with .zst
-            let input_str = args.input.to_string_lossy();
-            if input_str.ends_with("bz2") {
-                PathBuf::from(input_str.replace("bz2", "zst"))
-            } else {
-                let mut path = args.input.clone();
-                path.set_extension("zst");
-                path
-            }
-        };
-
         let raw_out: Box<dyn Write + Send> =
             Box::new(File::create(output_path).context("Failed to create output file")?);
 
