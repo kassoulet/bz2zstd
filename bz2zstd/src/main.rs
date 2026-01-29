@@ -45,7 +45,7 @@ use std::path::PathBuf;
 use std::thread;
 
 mod writer;
-use parallel_bzip2_decoder::{extract_bits, MarkerType, Scanner};
+use parallel_bzip2_decoder::{extract_bits, MarkerType, Scanner, MAX_BLOCK_SIZE};
 use writer::OutputWriter;
 
 /// Command-line arguments for bz2zstd.
@@ -143,28 +143,43 @@ fn main() -> Result<()> {
     let (result_sender, result_receiver) =
         bounded::<(usize, Vec<u8>)>(rayon::current_num_threads() * 2);
 
+    // Determine output file path
+    let output_path = if let Some(path) = &args.output {
+        path.clone()
+    } else {
+        // Auto-generate output filename by replacing .bz2 with .zst
+        let input_str = args.input.to_string_lossy();
+        if input_str.ends_with("bz2") {
+            PathBuf::from(input_str.replace("bz2", "zst"))
+        } else {
+            let mut path = args.input.clone();
+            path.set_extension("zst");
+            path
+        }
+    };
+
+    // Security Check: Verify that input and output file paths are distinct
+    // This prevents a 'Bus error' (SIGBUS) caused by truncating a file that is
+    // currently memory-mapped as input.
+    if let Ok(canon_input) = std::fs::canonicalize(&args.input) {
+        if let Ok(canon_output) = std::fs::canonicalize(&output_path) {
+            if canon_input == canon_output {
+                return Err(anyhow::anyhow!(
+                    "Input and output files must be different: {:?}",
+                    output_path
+                ));
+            }
+        }
+    }
+
     // === STAGE 3: WRITER THREAD ===
     //
     // Receives compressed blocks from workers and writes them in order.
     // Uses a HashMap to buffer out-of-order blocks.
+    let writer_output_path = output_path.clone();
     let writer_handle = thread::spawn(move || -> Result<()> {
-        // Determine output file path
-        let output_path = if let Some(path) = args.output {
-            path
-        } else {
-            // Auto-generate output filename by replacing .bz2 with .zst
-            let input_str = args.input.to_string_lossy();
-            if input_str.ends_with("bz2") {
-                PathBuf::from(input_str.replace("bz2", "zst"))
-            } else {
-                let mut path = args.input.clone();
-                path.set_extension("zst");
-                path
-            }
-        };
-
         let raw_out: Box<dyn Write + Send> =
-            Box::new(File::create(output_path).context("Failed to create output file")?);
+            Box::new(File::create(writer_output_path).context("Failed to create output file")?);
 
         let mut out = OutputWriter::new(raw_out)?;
         // Buffer for out-of-order blocks
@@ -281,8 +296,16 @@ fn main() -> Result<()> {
                     // Decompress the bzip2 block
                     // Note: Last block may not have EOS marker, causing UnexpectedEof
                     decomp_buf.clear();
-                    let mut decoder = BzDecoder::new(&wrapped_data[..]);
+                    // We take MAX_BLOCK_SIZE + 1 to detect if the limit was exceeded
+                    let mut decoder =
+                        BzDecoder::new(&wrapped_data[..]).take((MAX_BLOCK_SIZE + 1) as u64);
                     match decoder.read_to_end(decomp_buf) {
+                        Ok(_) if decomp_buf.len() > MAX_BLOCK_SIZE => {
+                            return Err(anyhow::anyhow!(
+                                "Decompression limit exceeded ({} bytes) at block {}. Possible decompression bomb.",
+                                MAX_BLOCK_SIZE, idx
+                            ));
+                        }
                         Ok(_) => {}
                         // Expected for last block without EOS marker
                         Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {}
