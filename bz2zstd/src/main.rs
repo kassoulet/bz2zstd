@@ -181,9 +181,7 @@ fn main() -> Result<()> {
     .unwrap_or(false);
 
     if is_same {
-        anyhow::bail!(
-            "Input and output files cannot be the same (preventing Bus Error with mmap)"
-        );
+        anyhow::bail!("Input and output files cannot be the same (preventing Bus Error with mmap)");
     }
 
     // === STAGE 3: WRITER THREAD ===
