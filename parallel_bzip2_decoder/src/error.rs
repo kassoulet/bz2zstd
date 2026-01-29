@@ -21,6 +21,14 @@ pub enum Bz2Error {
 
     /// Memory mapping failed.
     MmapFailed(std::io::Error),
+
+    /// Decompression limit exceeded (possible decompression bomb).
+    DecompressionLimitExceeded {
+        /// Bit offset where the block starts
+        offset: u64,
+        /// The limit that was exceeded
+        limit: usize,
+    },
 }
 
 impl fmt::Display for Bz2Error {
@@ -36,6 +44,13 @@ impl fmt::Display for Bz2Error {
             Bz2Error::InvalidFormat(msg) => write!(f, "Invalid bzip2 format: {}", msg),
             Bz2Error::Io(err) => write!(f, "I/O error: {}", err),
             Bz2Error::MmapFailed(err) => write!(f, "Memory mapping failed: {}", err),
+            Bz2Error::DecompressionLimitExceeded { offset, limit } => {
+                write!(
+                    f,
+                    "Decompression limit exceeded ({} bytes) at bit offset {}. Possible decompression bomb.",
+                    limit, offset
+                )
+            }
         }
     }
 }
@@ -47,6 +62,7 @@ impl std::error::Error for Bz2Error {
             Bz2Error::Io(err) => Some(err),
             Bz2Error::MmapFailed(err) => Some(err),
             Bz2Error::InvalidFormat(_) => None,
+            Bz2Error::DecompressionLimitExceeded { .. } => None,
         }
     }
 }

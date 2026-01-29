@@ -88,6 +88,10 @@ pub use decoder::Bz2Decoder;
 pub use error::{Bz2Error, Result};
 pub use scanner::{extract_bits, MarkerType, Scanner};
 
+/// Maximum allowed uncompressed size for a single bzip2 block (2MB).
+/// This protects against decompression bomb attacks.
+pub const MAX_BLOCK_SIZE: usize = 2 * 1024 * 1024;
+
 use bzip2::read::BzDecoder;
 use crossbeam_channel::bounded;
 use std::collections::HashMap;
@@ -295,8 +299,13 @@ pub fn decompress_block_into(
     // Decompress using the bzip2 crate
     // Note: The last block may not have a proper EOS marker, causing UnexpectedEof
     out.clear();
-    let mut decoder = BzDecoder::new(&scratch[..]);
+    // We take MAX_BLOCK_SIZE + 1 to detect if the limit was exceeded
+    let mut decoder = BzDecoder::new(&scratch[..]).take((MAX_BLOCK_SIZE + 1) as u64);
     match decoder.read_to_end(out) {
+        Ok(_) if out.len() > MAX_BLOCK_SIZE => Err(Bz2Error::DecompressionLimitExceeded {
+            offset: start_bit,
+            limit: MAX_BLOCK_SIZE,
+        }),
         Ok(_) => Ok(()),
         // UnexpectedEof is expected for the last block without EOS marker
         Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => Ok(()),
