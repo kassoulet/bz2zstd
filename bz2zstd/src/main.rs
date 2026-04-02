@@ -158,18 +158,43 @@ fn main() -> Result<()> {
         }
     };
 
-    // Security Check: Verify that input and output file paths are distinct
+    // Security Check: Verify that input and output file paths are distinct.
     // This prevents a 'Bus error' (SIGBUS) caused by truncating a file that is
     // currently memory-mapped as input.
-    if let Ok(canon_input) = std::fs::canonicalize(&args.input) {
-        if let Ok(canon_output) = std::fs::canonicalize(&output_path) {
-            if canon_input == canon_output {
-                return Err(anyhow::anyhow!(
-                    "Input and output files must be different: {:?}",
-                    output_path
-                ));
+    //
+    // We check both:
+    // 1. Canonical paths (detects same file via different paths/symlinks)
+    // 2. Device/Inode (detects same file via hard links on Unix)
+    let is_same_file = (|| -> Result<bool> {
+        let input_canon = std::fs::canonicalize(&args.input);
+        let output_canon = std::fs::canonicalize(&output_path);
+
+        if let (Ok(in_c), Ok(out_c)) = (input_canon, output_canon) {
+            if in_c == out_c {
+                return Ok(true);
             }
         }
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            let input_meta = std::fs::metadata(&args.input);
+            let output_meta = std::fs::metadata(&output_path);
+            if let (Ok(in_m), Ok(out_m)) = (input_meta, output_meta) {
+                if in_m.dev() == out_m.dev() && in_m.ino() == out_m.ino() {
+                    return Ok(true);
+                }
+            }
+        }
+
+        Ok(false)
+    })()?;
+
+    if is_same_file {
+        return Err(anyhow::anyhow!(
+            "Input and output files must be different: {:?}",
+            output_path
+        ));
     }
 
     // === STAGE 3: WRITER THREAD ===
