@@ -29,6 +29,14 @@ pub enum Bz2Error {
         /// The limit that was exceeded
         limit: usize,
     },
+
+    /// Compressed block size limit exceeded.
+    CompressedBlockLimitExceeded {
+        /// Bit offset where the block starts
+        offset: u64,
+        /// The limit that was exceeded
+        limit: usize,
+    },
 }
 
 impl fmt::Display for Bz2Error {
@@ -51,6 +59,13 @@ impl fmt::Display for Bz2Error {
                     limit, offset
                 )
             }
+            Bz2Error::CompressedBlockLimitExceeded { offset, limit } => {
+                write!(
+                    f,
+                    "Compressed block limit exceeded ({} bytes) at bit offset {}. Possible malicious file.",
+                    limit, offset
+                )
+            }
         }
     }
 }
@@ -63,6 +78,7 @@ impl std::error::Error for Bz2Error {
             Bz2Error::MmapFailed(err) => Some(err),
             Bz2Error::InvalidFormat(_) => None,
             Bz2Error::DecompressionLimitExceeded { .. } => None,
+            Bz2Error::CompressedBlockLimitExceeded { .. } => None,
         }
     }
 }
