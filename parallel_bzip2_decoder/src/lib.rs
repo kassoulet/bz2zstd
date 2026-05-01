@@ -92,6 +92,10 @@ pub use scanner::{extract_bits, MarkerType, Scanner};
 /// This protects against decompression bomb attacks.
 pub const MAX_BLOCK_SIZE: usize = 2 * 1024 * 1024;
 
+/// Maximum allowed compressed size for a single bzip2 block (4MB).
+/// This protects against resource exhaustion from maliciously large compressed blocks.
+pub const MAX_COMPRESSED_BLOCK_SIZE: usize = 4 * 1024 * 1024;
+
 use bzip2::read::BzDecoder;
 use crossbeam_channel::bounded;
 use std::collections::HashMap;
@@ -290,6 +294,16 @@ pub fn decompress_block_into(
     out: &mut Vec<u8>,
     scratch: &mut Vec<u8>,
 ) -> Result<()> {
+    let bit_len = end_bit.saturating_sub(start_bit);
+    let compressed_byte_len = ((bit_len + 7) / 8) as usize;
+
+    if compressed_byte_len > MAX_COMPRESSED_BLOCK_SIZE {
+        return Err(Bz2Error::CompressedBlockLimitExceeded {
+            offset: start_bit,
+            limit: MAX_COMPRESSED_BLOCK_SIZE,
+        });
+    }
+
     scratch.clear();
     // Add minimal bzip2 header (BZh9 = highest compression level)
     scratch.extend_from_slice(b"BZh9");
@@ -374,4 +388,29 @@ pub fn decompress_file<P: AsRef<std::path::Path>>(path: P) -> Result<Vec<u8>> {
 )]
 pub fn parallel_bzip2_cat<P: AsRef<std::path::Path>>(path: P) -> Result<Vec<u8>> {
     decompress_file(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_compressed_block_limit() {
+        let data = vec![0u8; 1024];
+        let mut out = Vec::new();
+        let mut scratch = Vec::new();
+
+        // 5MB limit exceeded (MAX_COMPRESSED_BLOCK_SIZE is 4MB)
+        let start_bit = 0;
+        let end_bit = 5 * 1024 * 1024 * 8;
+
+        let result = decompress_block_into(&data, start_bit, end_bit, &mut out, &mut scratch);
+        match result {
+            Err(Bz2Error::CompressedBlockLimitExceeded { offset, limit }) => {
+                assert_eq!(offset, 0);
+                assert_eq!(limit, MAX_COMPRESSED_BLOCK_SIZE);
+            }
+            _ => panic!("Expected CompressedBlockLimitExceeded error"),
+        }
+    }
 }

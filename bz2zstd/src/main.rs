@@ -45,7 +45,9 @@ use std::path::PathBuf;
 use std::thread;
 
 mod writer;
-use parallel_bzip2_decoder::{extract_bits, MarkerType, Scanner, MAX_BLOCK_SIZE};
+use parallel_bzip2_decoder::{
+    extract_bits, MarkerType, Scanner, MAX_BLOCK_SIZE, MAX_COMPRESSED_BLOCK_SIZE,
+};
 use writer::OutputWriter;
 
 /// Command-line arguments for bz2zstd.
@@ -309,6 +311,18 @@ fn main() -> Result<()> {
                 // This avoids lock contention and repeated allocations
                 || (Vec::new(), Compressor::new(args.zstd_level).unwrap()),
                 |(decomp_buf, compressor), (idx, (start_bit, end_bit))| -> Result<()> {
+                    // Security Check: Verify that the compressed block size is within limits.
+                    // This protects against resource exhaustion from maliciously large compressed blocks.
+                    let bit_len = end_bit.saturating_sub(start_bit);
+                    let compressed_byte_len = ((bit_len + 7) / 8) as usize;
+
+                    if compressed_byte_len > MAX_COMPRESSED_BLOCK_SIZE {
+                        return Err(anyhow::anyhow!(
+                            "Compressed block limit exceeded ({} bytes) at block {}. Possible malicious file.",
+                            MAX_COMPRESSED_BLOCK_SIZE, idx
+                        ));
+                    }
+
                     // Extract the compressed bzip2 block bits
                     let mut block_data = Vec::new();
                     extract_bits(&mmap, start_bit, end_bit, &mut block_data);
