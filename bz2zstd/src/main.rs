@@ -61,9 +61,10 @@ struct Args {
     #[arg(short, long)]
     output: Option<PathBuf>,
 
-    /// Zstd compression level (1-22, default = 9)
-    /// Higher values provide better compression but are slower
-    #[arg(short = 'z', long, default_value_t = 9)]
+    /// Zstd compression level (-7 to 22, default = 9)
+    /// Higher values provide better compression but are slower.
+    /// Negative values provide faster but less efficient compression.
+    #[arg(short = 'z', long, default_value_t = 9, value_parser = clap::value_parser!(i32).range(-7..=22))]
     zstd_level: i32,
 
     /// Number of threads to use (default = number of logical cores)
@@ -78,6 +79,11 @@ struct Args {
 
 fn main() -> Result<()> {
     let args = Args::parse();
+
+    // Pre-validate zstd compression level to ensure it's supported
+    // This prevents a panic in the worker threads later
+    zstd::bulk::Compressor::new(args.zstd_level)
+        .context("Invalid zstd compression level")?;
 
     // Configure global thread pool if user specified thread count
     // This affects all Rayon parallel iterators in the application
@@ -309,7 +315,13 @@ fn main() -> Result<()> {
             .try_for_each_init(
                 // Per-thread initialization: create buffers and compressor once per thread
                 // This avoids lock contention and repeated allocations
-                || (Vec::new(), Compressor::new(args.zstd_level).unwrap()),
+                || {
+                    (
+                        Vec::new(),
+                        Compressor::new(args.zstd_level)
+                            .expect("Compression level was pre-validated"),
+                    )
+                },
                 |(decomp_buf, compressor), (idx, (start_bit, end_bit))| -> Result<()> {
                     // Security Check: Verify that the compressed block size is within limits.
                     // This protects against resource exhaustion from maliciously large compressed blocks.
