@@ -82,8 +82,7 @@ fn main() -> Result<()> {
 
     // Pre-validate zstd compression level to ensure it's supported
     // This prevents a panic in the worker threads later
-    zstd::bulk::Compressor::new(args.zstd_level)
-        .context("Invalid zstd compression level")?;
+    zstd::bulk::Compressor::new(args.zstd_level).context("Invalid zstd compression level")?;
 
     // Configure global thread pool if user specified thread count
     // This affects all Rayon parallel iterators in the application
