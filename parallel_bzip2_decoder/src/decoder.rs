@@ -169,8 +169,12 @@ impl Bz2Decoder {
                         let mut decomp_buf = Vec::new();
                         // Decompress this block
                         decompress_block_into(slice, start_bit, end_bit, &mut decomp_buf, scratch)?;
-                        // Send result with index for reordering
-                        result_sender.send((idx, decomp_buf)).unwrap();
+                        // Send result with index for reordering.
+                        // We use map_err to stop the parallel worker pool gracefully
+                        // if the receiver has been dropped.
+                        result_sender.send((idx, decomp_buf)).map_err(|_| {
+                            Bz2Error::Io(io::Error::new(io::ErrorKind::Other, "Receiver dropped"))
+                        })?;
                         Ok(())
                     },
                 );
