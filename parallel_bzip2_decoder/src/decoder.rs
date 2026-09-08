@@ -147,14 +147,14 @@ impl Bz2Decoder {
         // Channel for sending decompressed blocks back to the reader
         // Sized at 2x thread count to allow some buffering without excessive memory use
         let (result_sender, result_receiver) = bounded(rayon::current_num_threads() * 2);
-        let data_ref: Arc<dyn AsRef<[u8]> + Send + Sync> = data;
+        let data_ref = data;
         let data_clone = data_ref.clone();
 
         // Spawn the driver thread that coordinates scanning and decompression
         std::thread::spawn(move || {
             let slice = data_clone.as_ref().as_ref();
             // Get block boundaries from the scanner
-            let task_receiver = scan_blocks(slice);
+            let task_receiver = scan_blocks(data_clone.clone());
 
             // Parallel decompression using Rayon
             // par_bridge() allows us to process an iterator in parallel
