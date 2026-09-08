@@ -100,6 +100,7 @@ use bzip2::read::BzDecoder;
 use crossbeam_channel::bounded;
 use std::collections::HashMap;
 use std::io::Read;
+use std::sync::Arc;
 
 /// Scans bzip2 data for block boundaries and returns them via a channel.
 ///
@@ -140,15 +141,13 @@ use std::io::Read;
 ///     println!("Block from bit {} to bit {}", start, end);
 /// }
 /// ```
-pub fn scan_blocks(data: &[u8]) -> crossbeam_channel::Receiver<(u64, u64)> {
+pub fn scan_blocks<T>(data: Arc<T>) -> crossbeam_channel::Receiver<(u64, u64)>
+where
+    T: AsRef<[u8]> + Send + Sync + 'static + ?Sized,
+{
     // Channel for sending block boundaries to the caller
     // Buffer size of 100 allows good throughput without excessive memory use
     let (task_sender, task_receiver) = bounded(100);
-
-    // Clone data into an Arc for safe sharing across threads
-    let data_vec = data.to_vec();
-    let data_arc = std::sync::Arc::new(data_vec);
-    let data_clone = data_arc.clone();
 
     std::thread::spawn(move || {
         let scanner = Scanner::new();
@@ -157,9 +156,9 @@ pub fn scan_blocks(data: &[u8]) -> crossbeam_channel::Receiver<(u64, u64)> {
         let (chunk_tx, chunk_rx) = bounded(4);
 
         // Spawn the actual scanning in a background thread
-        let scan_data = data_clone.clone();
+        let scan_data = data.clone();
         let _scan_handle = std::thread::spawn(move || {
-            scanner.scan_stream(&scan_data, 0, chunk_tx);
+            scanner.scan_stream(scan_data.as_ref().as_ref(), 0, chunk_tx);
         });
 
         // Reorder chunks and convert markers to block boundaries
@@ -200,7 +199,7 @@ pub fn scan_blocks(data: &[u8]) -> crossbeam_channel::Receiver<(u64, u64)> {
 
         // Handle edge case: block without EOS marker (truncated file)
         if let Some(start) = current_block_start {
-            let end = (data_clone.len() as u64) * 8;
+            let end = (data.as_ref().as_ref().len() as u64) * 8;
             let _ = task_sender.send((start, end));
         }
     });
