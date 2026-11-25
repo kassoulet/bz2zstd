@@ -35,7 +35,7 @@ memmap2 = "0.7"
 criterion = { version = "0.5", features = ["html_reports"] }
 
 [target.'cfg(unix)'.dev-dependencies]
-pprof = { version = "0.13", features = ["flamegraph", "criterion"] }
+pprof2 = { version = "0.13", features = ["flamegraph", "criterion"] }
 
 [[bench]]
 name = "decode_benchmark"

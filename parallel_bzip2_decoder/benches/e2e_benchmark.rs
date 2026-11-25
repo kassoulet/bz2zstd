@@ -2,7 +2,7 @@ use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 use memmap2::MmapOptions;
 use parallel_bzip2_decoder::Bz2Decoder;
 #[cfg(unix)]
-use pprof::criterion::{Output, PProfProfiler};
+use pprof2::criterion::{Output, PProfProfiler};
 use std::fs::{self, File};
 use std::io::Read;
 use std::path::{Path, PathBuf};

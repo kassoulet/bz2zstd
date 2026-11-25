@@ -240,9 +240,9 @@ which dd bzip2
 
 ### Flamegraphs Not Generated
 
-Check that `pprof` feature is enabled in `Cargo.toml`:
+Check that `pprof2` feature is enabled in `Cargo.toml`:
 ```toml
-pprof = { version = "0.13", features = ["flamegraph", "criterion"] }
+pprof2 = { version = "0.13", features = ["flamegraph", "criterion"] }
 ```
 
 ### Memory Profiling Too Slow
