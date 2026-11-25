@@ -42,7 +42,7 @@
 //! use parallel_bzip2_decoder::{scan_blocks, decompress_block};
 //!
 //! let compressed_data = std::fs::read("file.bz2").unwrap();
-//! let block_receiver = scan_blocks(&compressed_data);
+//! let block_receiver = scan_blocks(std::sync::Arc::new(compressed_data.clone()));
 //!
 //! for (start_bit, end_bit) in block_receiver {
 //!     let decompressed = decompress_block(&compressed_data, start_bit, end_bit).unwrap();
@@ -100,6 +100,7 @@ use bzip2::read::BzDecoder;
 use crossbeam_channel::bounded;
 use std::collections::HashMap;
 use std::io::Read;
+use std::sync::Arc;
 
 /// Scans bzip2 data for block boundaries and returns them via a channel.
 ///
@@ -134,21 +135,19 @@ use std::io::Read;
 /// use parallel_bzip2_decoder::scan_blocks;
 ///
 /// let data = std::fs::read("file.bz2").unwrap();
-/// let blocks = scan_blocks(&data);
+/// let blocks = scan_blocks(std::sync::Arc::new(data.clone()));
 ///
 /// for (start, end) in blocks {
 ///     println!("Block from bit {} to bit {}", start, end);
 /// }
 /// ```
-pub fn scan_blocks(data: &[u8]) -> crossbeam_channel::Receiver<(u64, u64)> {
+pub fn scan_blocks<T>(data: Arc<T>) -> crossbeam_channel::Receiver<(u64, u64)>
+where
+    T: AsRef<[u8]> + Send + Sync + 'static + ?Sized,
+{
     // Channel for sending block boundaries to the caller
     // Buffer size of 100 allows good throughput without excessive memory use
     let (task_sender, task_receiver) = bounded(100);
-
-    // Clone data into an Arc for safe sharing across threads
-    let data_vec = data.to_vec();
-    let data_arc = std::sync::Arc::new(data_vec);
-    let data_clone = data_arc.clone();
 
     std::thread::spawn(move || {
         let scanner = Scanner::new();
@@ -157,9 +156,9 @@ pub fn scan_blocks(data: &[u8]) -> crossbeam_channel::Receiver<(u64, u64)> {
         let (chunk_tx, chunk_rx) = bounded(4);
 
         // Spawn the actual scanning in a background thread
-        let scan_data = data_clone.clone();
+        let scan_data = data.clone();
         let _scan_handle = std::thread::spawn(move || {
-            scanner.scan_stream(&scan_data, 0, chunk_tx);
+            scanner.scan_stream(scan_data.as_ref().as_ref(), 0, chunk_tx);
         });
 
         // Reorder chunks and convert markers to block boundaries
@@ -200,7 +199,7 @@ pub fn scan_blocks(data: &[u8]) -> crossbeam_channel::Receiver<(u64, u64)> {
 
         // Handle edge case: block without EOS marker (truncated file)
         if let Some(start) = current_block_start {
-            let end = (data_clone.len() as u64) * 8;
+            let end = (data.as_ref().as_ref().len() as u64) * 8;
             let _ = task_sender.send((start, end));
         }
     });
@@ -234,7 +233,7 @@ pub fn scan_blocks(data: &[u8]) -> crossbeam_channel::Receiver<(u64, u64)> {
 /// use parallel_bzip2_decoder::{scan_blocks, decompress_block};
 ///
 /// let data = std::fs::read("file.bz2").unwrap();
-/// let blocks = scan_blocks(&data);
+/// let blocks = scan_blocks(std::sync::Arc::new(data.clone()));
 ///
 /// if let Some((start, end)) = blocks.iter().next() {
 ///     let decompressed = decompress_block(&data, start, end).unwrap();
@@ -277,7 +276,7 @@ pub fn decompress_block(data: &[u8], start_bit: u64, end_bit: u64) -> Result<Vec
 /// use parallel_bzip2_decoder::{scan_blocks, decompress_block_into};
 ///
 /// let data = std::fs::read("file.bz2").unwrap();
-/// let blocks = scan_blocks(&data);
+/// let blocks = scan_blocks(std::sync::Arc::new(data.clone()));
 ///
 /// let mut out = Vec::new();
 /// let mut scratch = Vec::new();

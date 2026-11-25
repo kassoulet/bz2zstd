@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Breaking:** `scan_blocks` now takes an `Arc<T: AsRef<[u8]>>` instead of `&[u8]`, avoiding a full copy of the input (e.g. memory-mapped files)
+
 ### Added
 - Initial release of parallel_bzip2_decoder crate
 - Parallel bzip2 decompression functionality

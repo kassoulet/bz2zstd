@@ -5,6 +5,7 @@ use pprof::criterion::{Output, PProfProfiler};
 use std::fs;
 use std::path::Path;
 use std::process::Command;
+use std::sync::Arc;
 
 /// Generate a test file of the specified size in MB
 fn generate_test_file(size_mb: usize) -> String {
@@ -53,7 +54,9 @@ fn bench_scanner(c: &mut Criterion) {
 
     for size_mb in [1, 10, 50].iter() {
         let bz2_file = generate_test_file(*size_mb);
-        let data = std::fs::read(&bz2_file).expect("Failed to read test file");
+        let data: Arc<[u8]> = std::fs::read(&bz2_file)
+            .expect("Failed to read test file")
+            .into();
 
         group.throughput(Throughput::Bytes(data.len() as u64));
         group.bench_with_input(
@@ -61,7 +64,7 @@ fn bench_scanner(c: &mut Criterion) {
             &data,
             |b, data| {
                 b.iter(|| {
-                    let receiver = scan_blocks(data);
+                    let receiver = scan_blocks(data.clone());
                     let mut count = 0;
                     while receiver.recv().is_ok() {
                         count += 1;
@@ -118,14 +121,16 @@ fn bench_scanner_multistream(c: &mut Criterion) {
         return;
     }
 
-    let data = std::fs::read(&bz2_filename).expect("Failed to read test file");
+    let data: Arc<[u8]> = std::fs::read(&bz2_filename)
+        .expect("Failed to read test file")
+        .into();
 
     let mut group = c.benchmark_group("scanner_multistream");
     group.throughput(Throughput::Bytes(data.len() as u64));
 
     group.bench_function("scan_multistream", |b| {
         b.iter(|| {
-            let receiver = scan_blocks(&data);
+            let receiver = scan_blocks(data.clone());
             let mut count = 0;
             while receiver.recv().is_ok() {
                 count += 1;

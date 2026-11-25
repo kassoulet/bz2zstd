@@ -5,13 +5,13 @@ use parallel_bzip2_decoder::scan_blocks;
 use std::time::{Duration, Instant};
 
 fuzz_target!(|data: &[u8]| {
-    // Stricter input size limit to prevent OOM from data.to_vec() in scan_blocks
+    // Input size limit to keep fuzz runs fast
     if data.is_empty() || data.len() > 1_000_000 {
         return;
     }
 
     // Call scan_blocks and consume the results with timeout
-    let receiver = scan_blocks(data);
+    let receiver = scan_blocks(std::sync::Arc::new(data.to_vec()));
 
     // Set a timeout to prevent hanging on pathological inputs
     let start = Instant::now();
