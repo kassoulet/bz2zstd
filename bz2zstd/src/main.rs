@@ -141,7 +141,8 @@ fn main() -> Result<()> {
     // Channel for block boundaries (start_bit, end_bit)
     // Bounded to prevent scanner from running too far ahead
     // Small buffer maintains cache locality
-    let (task_sender, task_receiver) = bounded::<(u64, u64)>(100);
+    // 2 per thread keeps workers fed while limiting how many input pages the scanner touches ahead.
+    let (task_sender, task_receiver) = bounded::<(u64, u64)>(rayon::current_num_threads() * 2);
 
     // Channel for compressed results (block_index, compressed_data)
     // Sized at 2x thread count to allow buffering without excessive memory use
@@ -335,6 +336,25 @@ fn main() -> Result<()> {
                         // limits and verifies the block CRC (detects corruption/truncation).
                         decompress_block_into(&mmap, start_bit, end_bit, decomp_buf, scratch)
                             .with_context(|| format!("Failed to decompress block {}", idx))?;
+
+                        // This block's input is no longer needed: drop its pages from the
+                        // page cache mapping so RSS doesn't grow to the size of the input.
+                        // Only whole pages inside the block are released (edges are shared
+                        // with neighbouring blocks); errors are ignored, it's just a hint.
+                        // ponytail: assumes 4 KiB pages; on larger pages the call fails harmlessly.
+                        #[cfg(unix)]
+                        {
+                            const PAGE: u64 = 4096;
+                            let from = (start_bit / 8 + PAGE - 1) / PAGE * PAGE;
+                            let to = (end_bit / 8) / PAGE * PAGE;
+                            if to > from {
+                                let _ = mmap.advise_range(
+                                    memmap2::Advice::DontNeed,
+                                    from as usize,
+                                    (to - from) as usize,
+                                );
+                            }
+                        }
 
                         // Compress to zstd using per-thread compressor
                         let compressed = compressor
