@@ -42,7 +42,7 @@
 //! use parallel_bzip2_decoder::{scan_blocks, decompress_block};
 //!
 //! let compressed_data = std::fs::read("file.bz2").unwrap();
-//! let block_receiver = scan_blocks(&compressed_data);
+//! let block_receiver = scan_blocks(std::sync::Arc::new(compressed_data.clone()));
 //!
 //! for (start_bit, end_bit) in block_receiver {
 //!     let decompressed = decompress_block(&compressed_data, start_bit, end_bit).unwrap();
@@ -135,7 +135,7 @@ use std::sync::Arc;
 /// use parallel_bzip2_decoder::scan_blocks;
 ///
 /// let data = std::fs::read("file.bz2").unwrap();
-/// let blocks = scan_blocks(&data);
+/// let blocks = scan_blocks(std::sync::Arc::new(data.clone()));
 ///
 /// for (start, end) in blocks {
 ///     println!("Block from bit {} to bit {}", start, end);
@@ -233,7 +233,7 @@ where
 /// use parallel_bzip2_decoder::{scan_blocks, decompress_block};
 ///
 /// let data = std::fs::read("file.bz2").unwrap();
-/// let blocks = scan_blocks(&data);
+/// let blocks = scan_blocks(std::sync::Arc::new(data.clone()));
 ///
 /// if let Some((start, end)) = blocks.iter().next() {
 ///     let decompressed = decompress_block(&data, start, end).unwrap();
@@ -276,7 +276,7 @@ pub fn decompress_block(data: &[u8], start_bit: u64, end_bit: u64) -> Result<Vec
 /// use parallel_bzip2_decoder::{scan_blocks, decompress_block_into};
 ///
 /// let data = std::fs::read("file.bz2").unwrap();
-/// let blocks = scan_blocks(&data);
+/// let blocks = scan_blocks(std::sync::Arc::new(data.clone()));
 ///
 /// let mut out = Vec::new();
 /// let mut scratch = Vec::new();
