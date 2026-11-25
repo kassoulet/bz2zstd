@@ -1,7 +1,7 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use parallel_bzip2_decoder::scan_blocks;
 #[cfg(unix)]
-use pprof2::criterion::{Output, PProfProfiler};
+use pprof::criterion::{Output, PProfProfiler};
 use std::fs;
 use std::path::Path;
 use std::process::Command;
