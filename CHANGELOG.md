@@ -10,6 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - **Breaking:** `scan_blocks` now takes an `Arc<T: AsRef<[u8]>>` instead of `&[u8]`, avoiding a full copy of the input (e.g. memory-mapped files)
 
+### Fixed
+- Block CRC is now verified; corrupt or truncated blocks return an error instead of silently producing bad/short output
+- `Bz2Decoder::read` returns an `InvalidData` error (after all preceding valid blocks) instead of a clean EOF when a block fails
+- `Bz2Decoder` no longer buffers an unbounded number of out-of-order blocks
+- `bz2zstd` writer no longer buffers an unbounded number of out-of-order blocks (new public `Throttle` helper shared with `Bz2Decoder`)
+- `decompress_block_into` / `decompress_block` return an error instead of panicking on out-of-range bit offsets
+- `Bz2Error` gains a `CrcMismatch` variant (breaking for exhaustive matches)
+
 ### Added
 - Initial release of parallel_bzip2_decoder crate
 - Parallel bzip2 decompression functionality

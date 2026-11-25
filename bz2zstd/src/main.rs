@@ -33,21 +33,19 @@
 //! ```
 
 use anyhow::{Context, Result};
-use bzip2::read::BzDecoder;
 use clap::Parser;
 use crossbeam_channel::bounded;
 use memmap2::MmapOptions;
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{Read, Write};
+use std::io::Write;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::thread;
 
 mod writer;
-use parallel_bzip2_decoder::{
-    extract_bits, MarkerType, Scanner, MAX_BLOCK_SIZE, MAX_COMPRESSED_BLOCK_SIZE,
-};
+use parallel_bzip2_decoder::{decompress_block_into, MarkerType, Scanner, Throttle};
 use writer::OutputWriter;
 
 /// Command-line arguments for bz2zstd.
@@ -209,34 +207,43 @@ fn main() -> Result<()> {
     // Receives compressed blocks from workers and writes them in order.
     // Uses a HashMap to buffer out-of-order blocks.
     let writer_output_path = output_path.clone();
+    // Keeps workers within a window of the writer so `buffer` below stays bounded.
+    let throttle = Arc::new(Throttle::new(rayon::current_num_threads() * 4));
+    let writer_throttle = throttle.clone();
     let writer_handle = thread::spawn(move || -> Result<()> {
-        let raw_out: Box<dyn Write + Send> =
-            Box::new(File::create(writer_output_path).context("Failed to create output file")?);
+        let res = (|| -> Result<()> {
+            let raw_out: Box<dyn Write + Send> =
+                Box::new(File::create(writer_output_path).context("Failed to create output file")?);
 
-        let mut out = OutputWriter::new(raw_out)?;
-        // Buffer for out-of-order blocks
-        let mut buffer: HashMap<usize, Vec<u8>> = HashMap::new();
-        let mut next_idx = 0;
+            let mut out = OutputWriter::new(raw_out)?;
+            // Buffer for out-of-order blocks
+            let mut buffer: HashMap<usize, Vec<u8>> = HashMap::new();
+            let mut next_idx = 0;
 
-        // Reordering loop: ensure blocks are written in correct order
-        for (idx, data) in result_receiver {
-            if idx == next_idx {
-                // This is the next expected block, write it immediately
-                out.write_all(&data)?;
-                next_idx += 1;
-
-                // Check if we have subsequent blocks buffered
-                while let Some(next_data) = buffer.remove(&next_idx) {
-                    out.write_all(&next_data)?;
+            // Reordering loop: ensure blocks are written in correct order
+            for (idx, data) in result_receiver {
+                if idx == next_idx {
+                    // This is the next expected block, write it immediately
+                    out.write_all(&data)?;
                     next_idx += 1;
+
+                    // Check if we have subsequent blocks buffered
+                    while let Some(next_data) = buffer.remove(&next_idx) {
+                        out.write_all(&next_data)?;
+                        next_idx += 1;
+                    }
+                    writer_throttle.set_next(next_idx);
+                } else {
+                    // Out-of-order block, buffer it for later
+                    buffer.insert(idx, data);
                 }
-            } else {
-                // Out-of-order block, buffer it for later
-                buffer.insert(idx, data);
             }
-        }
-        out.finish()?;
-        Ok(())
+            out.finish()?;
+            Ok(())
+        })();
+        // Writer is done (or failed): never leave workers blocked on backpressure.
+        writer_throttle.release();
+        res
     });
 
     // === STAGE 1: SCANNER THREAD ===
@@ -317,61 +324,38 @@ fn main() -> Result<()> {
                 || {
                     (
                         Vec::new(),
+                        Vec::new(),
                         Compressor::new(args.zstd_level)
                             .expect("Compression level was pre-validated"),
                     )
                 },
-                |(decomp_buf, compressor), (idx, (start_bit, end_bit))| -> Result<()> {
-                    // Security Check: Verify that the compressed block size is within limits.
-                    // This protects against resource exhaustion from maliciously large compressed blocks.
-                    let bit_len = end_bit.saturating_sub(start_bit);
-                    let compressed_byte_len = ((bit_len + 7) / 8) as usize;
+                |(decomp_buf, scratch, compressor), (idx, (start_bit, end_bit))| -> Result<()> {
+                    let res = (|| -> Result<()> {
+                        // Shared with the library: enforces the compressed/decompressed size
+                        // limits and verifies the block CRC (detects corruption/truncation).
+                        decompress_block_into(&mmap, start_bit, end_bit, decomp_buf, scratch)
+                            .with_context(|| format!("Failed to decompress block {}", idx))?;
 
-                    if compressed_byte_len > MAX_COMPRESSED_BLOCK_SIZE {
-                        return Err(anyhow::anyhow!(
-                            "Compressed block limit exceeded ({} bytes) at block {}. Possible malicious file.",
-                            MAX_COMPRESSED_BLOCK_SIZE, idx
-                        ));
+                        // Compress to zstd using per-thread compressor
+                        let compressed = compressor
+                            .compress(decomp_buf)
+                            .context("Failed to compress chunk")?;
+
+                        // Don't run more than a window ahead of the writer
+                        throttle.wait(idx);
+
+                        // Send to writer thread with block index for reordering
+                        result_sender
+                            .send((idx, compressed))
+                            .context("Failed to send compressed data")?;
+                        Ok(())
+                    })();
+                    // A failed block will never reach the writer: release workers waiting
+                    // on it so the pipeline can shut down instead of deadlocking.
+                    if res.is_err() {
+                        throttle.release();
                     }
-
-                    // Extract the compressed bzip2 block bits
-                    let mut block_data = Vec::new();
-                    extract_bits(&mmap, start_bit, end_bit, &mut block_data);
-
-                    // Wrap with bzip2 header (BZh9 = highest compression level)
-                    let mut wrapped_data = Vec::with_capacity(4 + block_data.len());
-                    wrapped_data.extend_from_slice(b"BZh9");
-                    wrapped_data.append(&mut block_data);
-
-                    // Decompress the bzip2 block
-                    // Note: Last block may not have EOS marker, causing UnexpectedEof
-                    decomp_buf.clear();
-                    // We take MAX_BLOCK_SIZE + 1 to detect if the limit was exceeded
-                    let mut decoder =
-                        BzDecoder::new(&wrapped_data[..]).take((MAX_BLOCK_SIZE + 1) as u64);
-                    match decoder.read_to_end(decomp_buf) {
-                        Ok(_) if decomp_buf.len() > MAX_BLOCK_SIZE => {
-                            return Err(anyhow::anyhow!(
-                                "Decompression limit exceeded ({} bytes) at block {}. Possible decompression bomb.",
-                                MAX_BLOCK_SIZE, idx
-                            ));
-                        }
-                        Ok(_) => {}
-                        // Expected for last block without EOS marker
-                        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {}
-                        Err(e) => return Err(e).context("Failed to decompress block"),
-                    }
-
-                    // Compress to zstd using per-thread compressor
-                    let compressed = compressor
-                        .compress(decomp_buf)
-                        .context("Failed to compress chunk")?;
-
-                    // Send to writer thread with block index for reordering
-                    result_sender
-                        .send((idx, compressed))
-                        .context("Failed to send compressed data")?;
-                    Ok(())
+                    res
                 },
             )?;
 

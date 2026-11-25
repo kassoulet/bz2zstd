@@ -34,7 +34,7 @@ use std::collections::HashMap;
 use std::io::{self, Read};
 use std::sync::Arc;
 
-use crate::{decompress_block_into, scan_blocks, Bz2Error, Result};
+use crate::{decompress_block_into, scan_blocks, Bz2Error, Result, Throttle};
 
 /// Parallel bzip2 decoder implementing the `Read` trait.
 ///
@@ -59,7 +59,7 @@ pub struct Bz2Decoder {
     #[allow(dead_code)]
     data: Arc<dyn AsRef<[u8]> + Send + Sync>,
     /// Channel receiving decompressed blocks: (block_index, decompressed_data)
-    receiver: Receiver<(usize, Vec<u8>)>,
+    receiver: Receiver<(usize, Result<Vec<u8>>)>,
     /// Current buffer being read from
     buffer: Vec<u8>,
     /// Position within the current buffer
@@ -67,7 +67,9 @@ pub struct Bz2Decoder {
     /// Index of the next block we expect to read
     next_block_idx: usize,
     /// Out-of-order blocks waiting to be read
-    pending_blocks: HashMap<usize, Vec<u8>>,
+    pending_blocks: HashMap<usize, Result<Vec<u8>>>,
+    /// Keeps workers within a window of the reader so `pending_blocks` stays bounded.
+    throttle: Arc<Throttle>,
 }
 
 impl Bz2Decoder {
@@ -149,6 +151,8 @@ impl Bz2Decoder {
         let (result_sender, result_receiver) = bounded(rayon::current_num_threads() * 2);
         let data_ref = data;
         let data_clone = data_ref.clone();
+        let throttle = Arc::new(Throttle::new(rayon::current_num_threads() * 4));
+        let worker_throttle = throttle.clone();
 
         // Spawn the driver thread that coordinates scanning and decompression
         std::thread::spawn(move || {
@@ -168,13 +172,28 @@ impl Bz2Decoder {
                     |scratch, (idx, (start_bit, end_bit))| -> Result<()> {
                         let mut decomp_buf = Vec::new();
                         // Decompress this block
-                        decompress_block_into(slice, start_bit, end_bit, &mut decomp_buf, scratch)?;
-                        // Send result with index for reordering.
+                        let res = decompress_block_into(
+                            slice,
+                            start_bit,
+                            end_bit,
+                            &mut decomp_buf,
+                            scratch,
+                        )
+                        .map(|()| decomp_buf);
+                        let failed = res.is_err();
+                        worker_throttle.wait(idx);
+                        // Send result (or error) with index for reordering, so the
+                        // reader yields every block before a failure, then the error.
                         // We use map_err to stop the parallel worker pool gracefully
                         // if the receiver has been dropped.
-                        result_sender.send((idx, decomp_buf)).map_err(|_| {
+                        result_sender.send((idx, res)).map_err(|_| {
                             Bz2Error::Io(io::Error::new(io::ErrorKind::Other, "Receiver dropped"))
                         })?;
+                        // Stop scheduling new blocks after a failure; blocks already
+                        // started (all lower indices) still complete and are sent.
+                        if failed {
+                            return Err(Bz2Error::InvalidFormat("block failed".into()));
+                        }
                         Ok(())
                     },
                 );
@@ -187,8 +206,38 @@ impl Bz2Decoder {
             buffer_pos: 0,
             next_block_idx: 0,
             pending_blocks: HashMap::new(),
+            throttle,
         }
     }
+
+    /// Marks the current block as consumed and wakes workers waiting on backpressure.
+    fn advance(&mut self) {
+        self.next_block_idx += 1;
+        self.throttle.set_next(self.next_block_idx);
+    }
+}
+
+impl Bz2Decoder {
+    /// Releases any workers blocked on backpressure so they can finish and exit.
+    fn release_workers(&self) {
+        self.throttle.release();
+    }
+
+    /// Converts a block error for the caller, letting workers drain (no more reads of data).
+    fn fail(&self, e: Bz2Error) -> io::Error {
+        self.release_workers();
+        to_io_error(e)
+    }
+}
+
+impl Drop for Bz2Decoder {
+    fn drop(&mut self) {
+        self.release_workers();
+    }
+}
+
+fn to_io_error(e: Bz2Error) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, e)
 }
 
 impl std::fmt::Debug for Bz2Decoder {
@@ -221,7 +270,8 @@ impl Read for Bz2Decoder {
     ///
     /// - `Ok(n)` where n > 0: Successfully read n bytes
     /// - `Ok(0)`: End of stream (all blocks decompressed)
-    /// - `Err(e)`: I/O error (should not happen in normal operation)
+    /// - `Err(e)`: a block failed to decompress (corrupt input, `InvalidData`).
+    ///   All blocks before the failing one are returned first.
     ///
     /// # Performance
     ///
@@ -240,9 +290,9 @@ impl Read for Bz2Decoder {
         loop {
             // Check if we have the next expected block in pending blocks
             if let Some(block) = self.pending_blocks.remove(&self.next_block_idx) {
-                self.buffer = block;
+                self.buffer = block.map_err(|e| self.fail(e))?;
                 self.buffer_pos = 0;
-                self.next_block_idx += 1;
+                self.advance();
                 // Tail recursion: actually copy data to caller's buffer
                 return self.read(buf);
             }
@@ -252,9 +302,9 @@ impl Read for Bz2Decoder {
                 Ok((idx, block)) => {
                     if idx == self.next_block_idx {
                         // This is the block we're waiting for
-                        self.buffer = block;
+                        self.buffer = block.map_err(|e| self.fail(e))?;
                         self.buffer_pos = 0;
-                        self.next_block_idx += 1;
+                        self.advance();
                         return self.read(buf);
                     } else {
                         // Out-of-order block, buffer it for later

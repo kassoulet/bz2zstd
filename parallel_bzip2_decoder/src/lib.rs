@@ -83,10 +83,12 @@
 pub mod decoder;
 pub mod error;
 pub mod scanner;
+pub mod throttle;
 
 pub use decoder::Bz2Decoder;
 pub use error::{Bz2Error, Result};
 pub use scanner::{extract_bits, MarkerType, Scanner};
+pub use throttle::Throttle;
 
 /// Maximum allowed uncompressed size for a single bzip2 block (2MB).
 /// This protects against decompression bomb attacks.
@@ -303,30 +305,94 @@ pub fn decompress_block_into(
         });
     }
 
+    // Validate the range: extract_bits indexes `data` directly and must not be handed
+    // positions past the end (this is a public API, callers may pass arbitrary values).
+    if start_bit >= end_bit || end_bit > (data.len() as u64).saturating_mul(8) {
+        return Err(Bz2Error::InvalidFormat(format!(
+            "invalid block range {}..{} for {} bytes of data",
+            start_bit,
+            end_bit,
+            data.len()
+        )));
+    }
+
     scratch.clear();
     // Add minimal bzip2 header (BZh9 = highest compression level)
     scratch.extend_from_slice(b"BZh9");
     // Extract the block bits and append to scratch buffer
     extract_bits(data, start_bit, end_bit, scratch);
 
-    // Decompress using the bzip2 crate
-    // Note: The last block may not have a proper EOS marker, causing UnexpectedEof
+    // Decompress using the bzip2 crate.
+    // Each block is extracted without its stream footer, so the decoder normally ends
+    // with UnexpectedEof; the block CRC check below is what detects truncation/corruption.
     out.clear();
     // We take MAX_BLOCK_SIZE + 1 to detect if the limit was exceeded
     let mut decoder = BzDecoder::new(&scratch[..]).take((MAX_BLOCK_SIZE + 1) as u64);
     match decoder.read_to_end(out) {
-        Ok(_) if out.len() > MAX_BLOCK_SIZE => Err(Bz2Error::DecompressionLimitExceeded {
-            offset: start_bit,
-            limit: MAX_BLOCK_SIZE,
-        }),
-        Ok(_) => Ok(()),
-        // UnexpectedEof is expected for the last block without EOS marker
-        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => Ok(()),
-        Err(e) => Err(Bz2Error::DecompressionFailed {
-            offset: start_bit,
-            source: e,
-        }),
+        Ok(_) if out.len() > MAX_BLOCK_SIZE => {
+            return Err(Bz2Error::DecompressionLimitExceeded {
+                offset: start_bit,
+                limit: MAX_BLOCK_SIZE,
+            })
+        }
+        Ok(_) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {}
+        Err(e) => {
+            return Err(Bz2Error::DecompressionFailed {
+                offset: start_bit,
+                source: e,
+            })
+        }
     }
+
+    // Verify the block CRC: 32 bits right after the 48-bit block magic.
+    let expected = read_u32_bits(data, start_bit + 48).ok_or_else(|| {
+        Bz2Error::InvalidFormat(format!("block at bit offset {} is truncated", start_bit))
+    })?;
+    let actual = bzip2_crc(out);
+    if expected != actual {
+        return Err(Bz2Error::CrcMismatch {
+            offset: start_bit,
+            expected,
+            actual,
+        });
+    }
+    Ok(())
+}
+
+/// Reads 32 bits (MSB first) starting at an arbitrary bit position.
+fn read_u32_bits(data: &[u8], bit: u64) -> Option<u32> {
+    let byte = usize::try_from(bit / 8).ok()?;
+    let b = data.get(byte..byte.checked_add(5)?)?;
+    let v = u64::from_be_bytes([0, 0, 0, b[0], b[1], b[2], b[3], b[4]]);
+    Some((v >> (8 - bit % 8)) as u32)
+}
+
+const CRC_TABLE: [u32; 256] = {
+    let mut t = [0u32; 256];
+    let mut i = 0;
+    while i < 256 {
+        let mut c = (i as u32) << 24;
+        let mut j = 0;
+        while j < 8 {
+            c = if c & 0x8000_0000 != 0 {
+                (c << 1) ^ 0x04c1_1db7
+            } else {
+                c << 1
+            };
+            j += 1;
+        }
+        t[i] = c;
+        i += 1;
+    }
+    t
+};
+
+/// bzip2's CRC-32 (poly 0x04c11db7, MSB-first, not reflected).
+fn bzip2_crc(data: &[u8]) -> u32 {
+    !data.iter().fold(!0u32, |c, &b| {
+        (c << 8) ^ CRC_TABLE[((c >> 24) as u8 ^ b) as usize]
+    })
 }
 
 /// Decompresses an entire bzip2 file into memory.

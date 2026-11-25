@@ -37,6 +37,17 @@ pub enum Bz2Error {
         /// The limit that was exceeded
         limit: usize,
     },
+
+    /// The decompressed block does not match the CRC stored in its header
+    /// (corrupt or truncated data).
+    CrcMismatch {
+        /// Bit offset where the block starts
+        offset: u64,
+        /// CRC stored in the block header
+        expected: u32,
+        /// CRC computed over the decompressed data
+        actual: u32,
+    },
 }
 
 impl fmt::Display for Bz2Error {
@@ -66,6 +77,15 @@ impl fmt::Display for Bz2Error {
                     limit, offset
                 )
             }
+            Bz2Error::CrcMismatch {
+                offset,
+                expected,
+                actual,
+            } => write!(
+                f,
+                "Block CRC mismatch at bit offset {}: expected {:08x}, got {:08x}",
+                offset, expected, actual
+            ),
         }
     }
 }
@@ -79,6 +99,7 @@ impl std::error::Error for Bz2Error {
             Bz2Error::InvalidFormat(_) => None,
             Bz2Error::DecompressionLimitExceeded { .. } => None,
             Bz2Error::CompressedBlockLimitExceeded { .. } => None,
+            Bz2Error::CrcMismatch { .. } => None,
         }
     }
 }
