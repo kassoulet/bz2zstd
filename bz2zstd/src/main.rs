@@ -35,6 +35,7 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use crossbeam_channel::bounded;
+use indicatif::{ProgressBar, ProgressStyle};
 use memmap2::MmapOptions;
 use rayon::prelude::*;
 use std::collections::HashMap;
@@ -43,6 +44,7 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::thread;
+use std::time::Duration;
 
 mod writer;
 use parallel_bzip2_decoder::{decompress_block_into, MarkerType, Scanner, Throttle};
@@ -137,6 +139,17 @@ fn main() -> Result<()> {
     // 1. Scanner thread: Finds block boundaries
     // 2. Worker pool: Decompresses bzip2 → compresses zstd
     // 3. Writer thread: Reorders and writes output
+
+    // Progress over input bytes handed to the workers. Hidden automatically when
+    // stderr is not a terminal (pipes, tests).
+    let progress = ProgressBar::new(mmap.len() as u64);
+    progress.set_style(
+        ProgressStyle::with_template(
+            "{wide_bar} {percent:>3}% | {bytes}/{total_bytes} | {bytes_per_sec} | ETA {eta_precise}",
+        )
+        .expect("static progress template is valid"),
+    );
+    progress.enable_steady_tick(Duration::from_millis(100));
 
     // Channel for block boundaries (start_bit, end_bit)
     // Bounded to prevent scanner from running too far ahead
@@ -252,6 +265,7 @@ fn main() -> Result<()> {
     // Scans the bzip2 file for block boundaries and converts markers to block ranges.
     std::thread::scope(|s| {
         let mmap_ref = &mmap;
+        let progress = progress.clone();
 
         s.spawn(move || {
             let scanner = Scanner::new();
@@ -337,6 +351,9 @@ fn main() -> Result<()> {
                         decompress_block_into(&mmap, start_bit, end_bit, decomp_buf, scratch)
                             .with_context(|| format!("Failed to decompress block {}", idx))?;
 
+                        // Count consumed input bytes once the block decoded successfully.
+                        progress.inc((end_bit - start_bit + 7) / 8);
+
                         // This block's input is no longer needed: drop its pages from the
                         // page cache mapping so RSS doesn't grow to the size of the input.
                         // Only whole pages inside the block are released (edges are shared
@@ -384,6 +401,8 @@ fn main() -> Result<()> {
 
     drop(result_sender);
     writer_handle.join().unwrap()?;
+    // Block ranges exclude the stream header/footer, so snap to 100% at the end.
+    progress.finish();
 
     Ok(())
 }
