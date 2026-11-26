@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Bz2Error` gains a `CrcMismatch` variant (breaking for exhaustive matches)
 
 ### Added
+- `bz2zstd --verbose`: reports bzip2 level, stream/block counts, parallel setup, throughput and peak memory
 - `bz2zstd` shows a progress bar (input read, %, speed, ETA) on interactive terminals
 - Initial release of parallel_bzip2_decoder crate
 - Parallel bzip2 decompression functionality

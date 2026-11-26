@@ -1,4 +1,10 @@
 [![CI](https://github.com/kassoulet/bz2zstd/actions/workflows/ci.yml/badge.svg)](https://github.com/kassoulet/bz2zstd/actions/workflows/ci.yml)
+[![Crates.io](https://img.shields.io/crates/v/bz2zstd.svg)](https://crates.io/crates/bz2zstd)
+[![Downloads](https://img.shields.io/crates/d/bz2zstd.svg)](https://crates.io/crates/bz2zstd)
+[![docs.rs](https://docs.rs/bz2zstd/badge.svg)](https://docs.rs/bz2zstd)
+[![License](https://img.shields.io/crates/l/bz2zstd.svg)](LICENSE)
+[![Crates.io (parallel_bzip2_decoder)](https://img.shields.io/crates/v/parallel_bzip2_decoder.svg)](https://crates.io/crates/parallel_bzip2_decoder)
+[![docs.rs (parallel_bzip2_decoder)](https://docs.rs/parallel_bzip2_decoder/badge.svg)](https://docs.rs/parallel_bzip2_decoder)
 
 # bz2zstd
 
@@ -70,6 +76,7 @@ The binary will be available at `target/release/bz2zstd`.
 -   `-z, --zstd-level <LEVEL>`: Set zstd compression level (default: 9, e.g., `-z 9`).
 -   `-j, --jobs <N>`: Number of threads to use (default: number of logical cores).
 -   `--benchmark-scan`: Benchmark mode: Only run the scanner and exit.
+-   `-v, --verbose`: Print input details (bzip2 level, streams, blocks), the parallel setup, and a summary with throughput and peak memory to stderr.
 
 ## Contributing
 

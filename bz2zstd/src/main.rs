@@ -42,9 +42,10 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::Write;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 use std::sync::Arc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 mod writer;
 use parallel_bzip2_decoder::{decompress_block_into, MarkerType, Scanner, Throttle};
@@ -75,6 +76,35 @@ struct Args {
     /// Useful for measuring scanner performance
     #[arg(long)]
     benchmark_scan: bool,
+
+    /// Print details about the input (bzip2 level, block/stream counts), the parallel
+    /// setup, and a summary with throughput and peak memory (to stderr)
+    #[arg(short, long)]
+    verbose: bool,
+}
+
+/// Counters filled in by the pipeline, reported by `--verbose`.
+#[derive(Default)]
+struct Stats {
+    streams: AtomicU64,
+    blocks: AtomicU64,
+    decompressed: AtomicU64,
+    compressed: AtomicU64,
+    max_block: AtomicU64,
+}
+
+/// Peak resident memory (VmHWM) in MB, from /proc (Linux only).
+fn peak_rss_mb() -> Option<u64> {
+    let status = std::fs::read_to_string("/proc/self/status").ok()?;
+    let kb: u64 = status
+        .lines()
+        .find_map(|l| l.strip_prefix("VmHWM:"))?
+        .trim()
+        .trim_end_matches("kB")
+        .trim()
+        .parse()
+        .ok()?;
+    Some(kb / 1024)
 }
 
 fn main() -> Result<()> {
@@ -216,6 +246,45 @@ fn main() -> Result<()> {
         ));
     }
 
+    let started = Instant::now();
+    let stats = Stats::default();
+    let stats = &stats;
+    if args.verbose {
+        // The stream header is "BZh" + level '1'..'9'; block size is level * 100 kB.
+        let level = match mmap.get(..4) {
+            Some([b'B', b'Z', b'h', l @ b'1'..=b'9']) => Some(u32::from(l - b'0')),
+            _ => None,
+        };
+        let threads = rayon::current_num_threads();
+        eprintln!(
+            "Input:    {} ({:.1} MiB)",
+            args.input.display(),
+            mmap.len() as f64 / 1048576.0
+        );
+        match level {
+            Some(l) => eprintln!(
+                "bzip2:    level {} (block size {} kB, first stream)",
+                l,
+                l * 100
+            ),
+            None => eprintln!("bzip2:    no valid 'BZh' header at start of file"),
+        }
+        eprintln!(
+            "Mode:     parallel, {} worker threads + {} scanner threads, memory-mapped input",
+            threads, threads
+        );
+        eprintln!(
+            "Queues:   {} pending block ranges, writer window {} blocks",
+            threads * 2,
+            threads * 4
+        );
+        eprintln!(
+            "Output:   {} (zstd level {})",
+            output_path.display(),
+            args.zstd_level
+        );
+    }
+
     // === STAGE 3: WRITER THREAD ===
     //
     // Receives compressed blocks from workers and writes them in order.
@@ -302,6 +371,7 @@ fn main() -> Result<()> {
                                 current_block_start = Some(marker_pos);
                             }
                             MarkerType::Eos => {
+                                stats.streams.fetch_add(1, Relaxed);
                                 // End-of-stream marker: end current block
                                 if let Some(start) = current_block_start {
                                     if task_sender.send((start, marker_pos)).is_err() {
@@ -351,6 +421,12 @@ fn main() -> Result<()> {
                         decompress_block_into(&mmap, start_bit, end_bit, decomp_buf, scratch)
                             .with_context(|| format!("Failed to decompress block {}", idx))?;
 
+                        stats.blocks.fetch_add(1, Relaxed);
+                        stats
+                            .decompressed
+                            .fetch_add(decomp_buf.len() as u64, Relaxed);
+                        stats.max_block.fetch_max(decomp_buf.len() as u64, Relaxed);
+
                         // Count consumed input bytes once the block decoded successfully.
                         progress.inc((end_bit - start_bit + 7) / 8);
 
@@ -378,6 +454,8 @@ fn main() -> Result<()> {
                             .compress(decomp_buf)
                             .context("Failed to compress chunk")?;
 
+                        stats.compressed.fetch_add(compressed.len() as u64, Relaxed);
+
                         // Don't run more than a window ahead of the writer
                         throttle.wait(idx);
 
@@ -403,6 +481,37 @@ fn main() -> Result<()> {
     writer_handle.join().unwrap()?;
     // Block ranges exclude the stream header/footer, so snap to 100% at the end.
     progress.finish();
+
+    if args.verbose {
+        let secs = started.elapsed().as_secs_f64();
+        let blocks = stats.blocks.load(Relaxed);
+        let dec = stats.decompressed.load(Relaxed);
+        let comp = stats.compressed.load(Relaxed);
+        let mib = |b: u64| b as f64 / 1048576.0;
+        eprintln!("Streams:  {}", stats.streams.load(Relaxed));
+        eprintln!(
+            "Blocks:   {} (avg {:.0} kB, max {:.0} kB decompressed)",
+            blocks,
+            dec as f64 / blocks.max(1) as f64 / 1024.0,
+            stats.max_block.load(Relaxed) as f64 / 1024.0
+        );
+        eprintln!(
+            "Data:     {:.1} MiB bzip2 -> {:.1} MiB raw -> {:.1} MiB zstd (zstd/raw {:.1}%)",
+            mib(mmap.len() as u64),
+            mib(dec),
+            mib(comp),
+            comp as f64 * 100.0 / dec.max(1) as f64
+        );
+        eprintln!(
+            "Time:     {:.1}s ({:.1} MiB/s bzip2 in, {:.1} MiB/s raw out)",
+            secs,
+            mib(mmap.len() as u64) / secs,
+            mib(dec) / secs
+        );
+        if let Some(mb) = peak_rss_mb() {
+            eprintln!("Memory:   peak RSS {} MB", mb);
+        }
+    }
 
     Ok(())
 }
